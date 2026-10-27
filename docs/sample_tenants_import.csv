@@ -1,0 +1,3 @@
+full_name,phone,property_name,floor_name,room_number,bed_label,start_date,agreed_rent_paise,deposit_paise,emergency_contact_name,emergency_contact_phone,id_number
+Ravi Kumar,9812345678,Smoke PG,Ground,101,A,2026-10-01,700000,1500000,Sita,9222222222,AD1234
+Tenant Two,9812345679,Smoke PG,Ground,101,B,2026-10-15,700000,1500000,,,,

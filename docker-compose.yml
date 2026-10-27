@@ -1,0 +1,77 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: pgms
+      POSTGRES_PASSWORD: pgms_dev
+      POSTGRES_DB: pgms
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pgms"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    build: ./backend
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    environment:
+      DATABASE_URL: postgresql+psycopg://pgms:pgms_dev@postgres:5432/pgms
+      REDIS_URL: redis://redis:6379/0
+      JWT_SECRET: dev-secret-change-me
+      OTP_DEV_MODE: "true"
+      UPLOAD_DIR: /data/uploads
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+      - ./uploads:/data/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Temporary public HTTPS endpoint for remote app testing. Start with:
+  #   docker compose --profile tunnel up -d
+  # Find the generated URL with:
+  #   docker compose logs -f backend-tunnel
+  backend-tunnel:
+    image: cloudflare/cloudflared:latest
+    command: tunnel --no-autoupdate --url http://backend:8000
+    depends_on:
+      - backend
+    profiles: ["tunnel"]
+    restart: unless-stopped
+
+  # ------------------------------------------------------------------
+  # Optional job stack (weeks 9-10: WhatsApp/SMS reminders, scheduled
+  # invoice generation). Enable with:
+  #   docker compose --profile jobs up -d
+  # Invoices are generated inline via POST /invoices/generate without it.
+  # ------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    profiles: ["jobs"]
+
+  worker:
+    build: ./backend
+    command: celery -A app.workers.celery_app:celery worker --loglevel=info --beat
+    environment:
+      DATABASE_URL: postgresql+psycopg://pgms:pgms_dev@postgres:5432/pgms
+      REDIS_URL: redis://redis:6379/0
+      JWT_SECRET: dev-secret-change-me
+      OTP_DEV_MODE: "true"
+      UPLOAD_DIR: /data/uploads
+    volumes:
+      - ./uploads:/data/uploads
+    depends_on:
+      - postgres
+      - redis
+    profiles: ["jobs"]
+
+volumes:
+  pgdata:

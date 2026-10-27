@@ -1,0 +1,19 @@
+INFO:     Started server process [7584]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+INFO:     127.0.0.1:45612 - "POST /auth/otp/request HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45618 - "POST /auth/otp/verify HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45632 - "POST /properties HTTP/1.1" 201 Created
+INFO:     127.0.0.1:45638 - "POST /properties/395fc0fe-0828-499a-9e58-25d608b1c429/floors HTTP/1.1" 201 Created
+INFO:     127.0.0.1:45648 - "POST /floors/8cb914ff-8e57-4910-9831-f9af02da6b2b/rooms HTTP/1.1" 201 Created
+INFO:     127.0.0.1:45664 - "POST /rooms/6e6994f8-ceb1-4b9d-80e1-8344da6b6d03/beds/bulk HTTP/1.1" 201 Created
+INFO:     127.0.0.1:45678 - "POST /tenants/import HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45692 - "POST /invoices/generate HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45694 - "POST /payments HTTP/1.1" 201 Created
+INFO:     127.0.0.1:45700 - "GET /dues HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45716 - "GET /occupancy-grid HTTP/1.1" 200 OK
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [7584]
