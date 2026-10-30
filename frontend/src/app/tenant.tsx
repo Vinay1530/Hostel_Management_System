@@ -78,7 +78,7 @@ export default function TenantHome() {
             <Pressable style={styles.actionButton} onPress={() => router.push("/complaints/new")}>
               <Text style={styles.actionText}>Report a problem</Text>
             </Pressable>
-            <Pressable style={styles.actionButtonSecondary} onPress={() => router.push("/complaints/index")}>
+            <Pressable style={styles.actionButtonSecondary} onPress={() => router.push("/complaints")}>
               <Text style={styles.actionTextSecondary}>My complaints</Text>
             </Pressable>
             <Pressable style={styles.actionButtonSecondary} onPress={() => router.push("/chat")}>

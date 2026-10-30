@@ -11,7 +11,7 @@ export default function InboxScreen() {
       <Text style={styles.title}>Communications</Text>
       <Text style={styles.subtitle}>Stay on top of tenant reports and messages.</Text>
       <SearchBar editable={false} onPress={() => router.push("/search")} />
-      <Pressable style={styles.card} onPress={() => router.push("/complaints/index")}>
+      <Pressable style={styles.card} onPress={() => router.push("/complaints")}>
         <View style={styles.icon}><Ionicons name="construct-outline" size={22} color={theme.accentText} /></View>
         <View style={{ flex: 1 }}>
           <Text style={styles.cardTitle}>Tenant complaints</Text>
