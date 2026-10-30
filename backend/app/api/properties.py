@@ -1,13 +1,15 @@
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import func, select
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
-from app.core.security import AuthContext, require_staff
+from app.core.security import AuthContext, require_org, require_staff
 from app.models.enums import BedStatus
-from app.models.models import Bed, Floor, Property, Room, Stay, Tenant
+from app.models.enums import Role
+from app.models.models import Bed, Floor, Membership, Organization, Property, Room, Stay, Tenant, User
+from app.services.collaboration import ensure_property_conversations
 from app.schemas.schemas import (
     BedGrid,
     BedIn,
@@ -23,11 +25,17 @@ from app.schemas.schemas import (
     LayoutFloorSummary,
     PropertyGrid,
     PropertyIn,
+    PropertyDetailOut,
+    PropertyListOut,
     PropertyOut,
+    PropertyRoomSummary,
     PropertyUpdate,
+    RoomBedDetail,
+    RoomDetailOut,
     RoomGrid,
     RoomIn,
     RoomOut,
+    RoomTenantDetail,
     RoomUpdate,
 )
 
@@ -74,21 +82,187 @@ def _own_bed(db: Session, org_id: uuid.UUID, bed_id: uuid.UUID) -> Bed:
     return b
 
 
+def _active_property_id(db: Session, auth: AuthContext) -> uuid.UUID | None:
+    tenant = db.execute(
+        select(Tenant).where(
+            Tenant.organization_id == auth.org_id,
+            Tenant.phone == auth.user.phone,
+        )
+    ).scalar_one_or_none()
+    if tenant is None:
+        return None
+    return db.execute(
+        select(Floor.property_id)
+        .join(Room, Room.floor_id == Floor.id)
+        .join(Bed, Bed.room_id == Room.id)
+        .join(Stay, Stay.bed_id == Bed.id)
+        .where(Stay.tenant_id == tenant.id, Stay.active.is_(True))
+        .limit(1)
+    ).scalar_one_or_none()
+
+
+def _visible_property(
+    db: Session, auth: AuthContext, property_id: uuid.UUID
+) -> Property:
+    prop = db.execute(
+        select(Property).where(
+            Property.id == property_id,
+            Property.organization_id == auth.org_id,
+        )
+    ).scalar_one_or_none()
+    if prop is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Property not found")
+    if auth.role in (Role.owner, Role.manager):
+        return prop
+    if auth.role == Role.tenant and _active_property_id(db, auth) == prop.id:
+        return prop
+    raise HTTPException(status.HTTP_404_NOT_FOUND, "Property not found")
+
+
 # ---------- properties ----------
 
-@router.get("/properties", response_model=list[PropertyOut])
+@router.get("/properties", response_model=list[PropertyListOut])
 def list_properties(auth: AuthContext = Depends(require_staff), db: Session = Depends(get_db)):
-    return db.execute(
-        select(Property)
+    rows = db.execute(
+        select(
+            Property,
+            func.count(func.distinct(Room.id)).label("total_rooms"),
+            func.count(func.distinct(Bed.id)).label("total_beds"),
+            func.count(func.distinct(Stay.bed_id)).label("occupied_beds"),
+            func.count(
+                func.distinct(
+                    case(((Bed.status == BedStatus.vacant) & Stay.id.is_(None), Bed.id))
+                )
+            ).label("vacant_beds"),
+        )
+        .outerjoin(Floor, Floor.property_id == Property.id)
+        .outerjoin(Room, Room.floor_id == Floor.id)
+        .outerjoin(Bed, Bed.room_id == Room.id)
+        .outerjoin(Stay, (Stay.bed_id == Bed.id) & Stay.active.is_(True))
         .where(Property.organization_id == auth.org_id)
+        .group_by(Property.id)
         .order_by(Property.created_at)
-    ).scalars().all()
+    ).all()
+    return [
+        PropertyListOut.model_validate(prop).model_copy(
+            update={
+                "total_rooms": total_rooms,
+                "total_beds": total_beds,
+                "occupied_beds": occupied_beds,
+                "vacant_beds": vacant_beds,
+            }
+        )
+        for prop, total_rooms, total_beds, occupied_beds, vacant_beds in rows
+    ]
+
+
+@router.get("/properties/{property_id}", response_model=PropertyDetailOut)
+def get_property_details(
+    property_id: uuid.UUID,
+    auth: AuthContext = Depends(require_org),
+    db: Session = Depends(get_db),
+):
+    prop = _visible_property(db, auth, property_id)
+    total_rooms, total_beds, occupied_beds, vacant_beds = db.execute(
+        select(
+            func.count(func.distinct(Room.id)),
+            func.count(func.distinct(Bed.id)),
+            func.count(func.distinct(Stay.bed_id)),
+            func.count(
+                func.distinct(
+                    case(((Bed.status == BedStatus.vacant) & Stay.id.is_(None), Bed.id))
+                )
+            ),
+        )
+        .select_from(Floor)
+        .outerjoin(Room, Room.floor_id == Floor.id)
+        .outerjoin(Bed, Bed.room_id == Room.id)
+        .outerjoin(Stay, (Stay.bed_id == Bed.id) & Stay.active.is_(True))
+        .where(Floor.property_id == prop.id)
+    ).one()
+    owner = db.execute(
+        select(User)
+        .join(Membership, Membership.user_id == User.id)
+        .where(
+            Membership.organization_id == prop.organization_id,
+            Membership.role == Role.owner,
+        )
+        .order_by(User.id)
+        .limit(1)
+    ).scalar_one_or_none()
+    organization = db.get(Organization, prop.organization_id)
+    return PropertyDetailOut.model_validate(prop).model_copy(
+        update={
+            "owner_name": owner.name if owner else None,
+            "contact_phone": organization.contact_phone if organization else None,
+            "total_rooms": total_rooms,
+            "total_beds": total_beds,
+            "occupied_beds": occupied_beds,
+            "vacant_beds": vacant_beds,
+        }
+    )
+
+
+@router.get("/properties/{property_id}/rooms", response_model=list[PropertyRoomSummary])
+def list_property_room_summaries(
+    property_id: uuid.UUID,
+    floor: str | None = None,
+    room_status: str | None = Query(None, alias="status"),
+    auth: AuthContext = Depends(require_org),
+    db: Session = Depends(get_db),
+):
+    _visible_property(db, auth, property_id)
+    if room_status not in (None, "vacant", "partially_filled", "full"):
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "status must be vacant, partially_filled, or full",
+        )
+    stmt = (
+        select(
+            Room,
+            Floor.name,
+            func.count(func.distinct(Bed.id)).label("total_beds"),
+            func.count(func.distinct(Stay.bed_id)).label("occupied_beds"),
+        )
+        .join(Floor, Floor.id == Room.floor_id)
+        .outerjoin(Bed, Bed.room_id == Room.id)
+        .outerjoin(Stay, (Stay.bed_id == Bed.id) & Stay.active.is_(True))
+        .where(Floor.property_id == property_id)
+        .group_by(Room.id, Floor.name)
+        .order_by(Floor.name, Room.number)
+    )
+    if floor:
+        stmt = stmt.where(Floor.name == floor)
+    results = []
+    for room, floor_name, total_beds, occupied_beds in db.execute(stmt).all():
+        status_name = (
+            "vacant" if occupied_beds == 0
+            else "full" if occupied_beds >= total_beds
+            else "partially_filled"
+        )
+        if room_status and room_status != status_name:
+            continue
+        results.append(
+            PropertyRoomSummary(
+                id=room.id,
+                number=room.number,
+                floor=floor_name,
+                sharing_type=room.sharing_type,
+                total_beds=total_beds,
+                occupied_beds=occupied_beds,
+                status=status_name,
+            )
+        )
+    results.sort(key=lambda room: (_floor_sort_key(room.floor), room.number))
+    return results
 
 
 @router.post("/properties", response_model=PropertyOut, status_code=201)
 def create_property(body: PropertyIn, auth: AuthContext = Depends(require_staff), db: Session = Depends(get_db)):
     p = Property(organization_id=auth.org_id, **body.model_dump())
     db.add(p)
+    db.flush()
+    ensure_property_conversations(db, p)
     db.commit()
     db.refresh(p)
     return p
@@ -158,10 +332,13 @@ def create_layout(
         organization_id=auth.org_id,
         name=body.name,
         address=body.address,
+        city=body.city,
+        locality=body.locality,
         facilities=body.facilities,
     )
     db.add(prop)
     db.flush()
+    ensure_property_conversations(db, prop)
 
     floor_out: list[LayoutFloorSummary] = []
     total_rooms = total_beds = 0
@@ -367,9 +544,56 @@ def create_room(
     return r
 
 
-@router.get("/rooms/{room_id}", response_model=RoomOut)
-def get_room(room_id: uuid.UUID, auth: AuthContext = Depends(require_staff), db: Session = Depends(get_db)):
-    return _own_room(db, auth.org_id, room_id)
+@router.get("/rooms/{room_id}", response_model=RoomDetailOut)
+def get_room(
+    room_id: uuid.UUID,
+    auth: AuthContext = Depends(require_org),
+    db: Session = Depends(get_db),
+):
+    row = db.execute(
+        select(Room, Floor.name, Floor.property_id)
+        .join(Floor, Floor.id == Room.floor_id)
+        .where(Room.id == room_id, Room.organization_id == auth.org_id)
+    ).one_or_none()
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Room not found")
+    room, floor_name, property_id = row
+    _visible_property(db, auth, property_id)
+    bed_rows = db.execute(
+        select(Bed, Stay, Tenant)
+        .outerjoin(Stay, (Stay.bed_id == Bed.id) & Stay.active.is_(True))
+        .outerjoin(Tenant, Tenant.id == Stay.tenant_id)
+        .where(Bed.room_id == room.id)
+        .order_by(Bed.label)
+    ).all()
+    beds = [
+        RoomBedDetail(
+            id=bed.id,
+            label=bed.label,
+            rent_paise=bed.rent_paise,
+            deposit_paise=bed.deposit_paise,
+            status=bed.status,
+            tenant=(
+                RoomTenantDetail(
+                    tenant_id=tenant.id,
+                    tenant_name=tenant.full_name,
+                    move_in_date=stay.start_date,
+                )
+                if stay is not None and tenant is not None
+                else None
+            ),
+        )
+        for bed, stay, tenant in bed_rows
+    ]
+    return RoomDetailOut(
+        id=room.id,
+        property_id=property_id,
+        number=room.number,
+        floor=floor_name,
+        sharing_type=room.sharing_type,
+        facilities=room.facilities,
+        beds=beds,
+    )
 
 
 @router.delete("/rooms/{room_id}", status_code=204)
@@ -574,7 +798,17 @@ def occupancy_grid(auth: AuthContext = Depends(require_staff), db: Session = Dep
                 room_grids.append(RoomGrid(id=r.id, number=r.number, sharing_type=r.sharing_type, facilities=r.facilities, beds=bed_grids))
             floor_grids.append(FloorGrid(id=f.id, name=f.name, rooms=room_grids))
 
-        out.append(PropertyGrid(id=p.id, property_id=p.id, name=p.name, address=p.address, floors=floor_grids))
+        out.append(
+            PropertyGrid(
+                id=p.id,
+                property_id=p.id,
+                name=p.name,
+                address=p.address,
+                city=p.city,
+                locality=p.locality,
+                floors=floor_grids,
+            )
+        )
 
     return GridOut(
         properties=out,

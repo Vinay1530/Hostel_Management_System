@@ -7,6 +7,10 @@ from app.models.enums import (
     BedStatus,
     BillingCycle,
     ChargeType,
+    ComplaintCategory,
+    ComplaintPriority,
+    ComplaintStatus,
+    ConversationType,
     DocType,
     InvoiceStatus,
     PaymentMode,
@@ -52,6 +56,11 @@ class AuthOut(BaseModel):
 class PropertyIn(BaseModel):
     name: str
     address: str | None = None
+    city: str | None = None
+    locality: str | None = None
+    gate_timing: str | None = None
+    food_rules: str | None = None
+    visitor_rules: str | None = None
     advance_or_arrears: BillingCycle = BillingCycle.advance
     due_day: int = Field(5, ge=1, le=28)
     pro_rate_first_month: bool = True
@@ -63,6 +72,11 @@ class PropertyUpdate(BaseModel):
     """Partial update: all fields optional."""
     name: str | None = None
     address: str | None = None
+    city: str | None = None
+    locality: str | None = None
+    gate_timing: str | None = None
+    food_rules: str | None = None
+    visitor_rules: str | None = None
     advance_or_arrears: BillingCycle | None = None
     due_day: int | None = Field(None, ge=1, le=28)
     pro_rate_first_month: bool | None = None
@@ -74,12 +88,110 @@ class PropertyOut(ORMModel):
     id: uuid.UUID
     name: str
     address: str | None
+    city: str | None
+    locality: str | None
+    gate_timing: str | None
+    food_rules: str | None
+    visitor_rules: str | None
     advance_or_arrears: BillingCycle
     due_day: int
     pro_rate_first_month: bool
     notice_period_days: int
     facilities: str | None
     created_at: datetime
+
+
+class PropertyListOut(PropertyOut):
+    total_rooms: int
+    total_beds: int
+    occupied_beds: int
+    vacant_beds: int
+
+
+class PropertyDetailOut(PropertyOut):
+    owner_name: str | None
+    contact_phone: str | None
+    total_rooms: int
+    total_beds: int
+    occupied_beds: int
+    vacant_beds: int
+
+
+class PropertyRoomSummary(BaseModel):
+    id: uuid.UUID
+    number: str
+    floor: str
+    sharing_type: int
+    total_beds: int
+    occupied_beds: int
+    status: str
+
+
+class RoomTenantDetail(BaseModel):
+    tenant_id: uuid.UUID
+    tenant_name: str
+    move_in_date: date
+
+
+class RoomBedDetail(ORMModel):
+    id: uuid.UUID
+    label: str
+    rent_paise: int
+    deposit_paise: int
+    status: BedStatus
+    tenant: RoomTenantDetail | None
+
+
+class RoomDetailOut(ORMModel):
+    id: uuid.UUID
+    property_id: uuid.UUID
+    number: str
+    floor: str
+    sharing_type: int
+    facilities: str | None
+    beds: list[RoomBedDetail]
+
+
+class SearchPropertyResult(BaseModel):
+    id: uuid.UUID
+    name: str
+    locality: str | None
+    city: str | None
+    occupied_beds: int
+    total_beds: int
+
+
+class SearchRoomResult(BaseModel):
+    id: uuid.UUID
+    property_id: uuid.UUID
+    number: str
+    property_name: str
+    floor: str
+    sharing_type: int
+
+
+class SearchTenantResult(BaseModel):
+    id: uuid.UUID
+    full_name: str
+    phone: str | None = None
+    property_id: uuid.UUID
+    property_name: str
+    room_number: str
+
+
+class SearchOut(BaseModel):
+    pgs: list[SearchPropertyResult]
+    rooms: list[SearchRoomResult]
+    tenants: list[SearchTenantResult]
+
+
+class TenantSearchProfile(BaseModel):
+    id: uuid.UUID
+    full_name: str
+    phone: str | None = None
+    property_name: str
+    room_number: str
+    move_in_date: date
 
 
 class FloorIn(BaseModel):
@@ -145,6 +257,8 @@ class LayoutIn(BaseModel):
     """
     name: str = Field(min_length=1, max_length=200)
     address: str | None = None
+    city: str | None = None
+    locality: str | None = None
     facilities: str | None = None  # property-level: wifi,laundry,parking,mess...
     no_of_floors: int = Field(1, ge=1, le=10)
     rooms_per_floor: int = Field(1, ge=1, le=50)
@@ -191,6 +305,9 @@ class FloorGrid(FloorOut):
 
 class PropertyGrid(FloorOut):
     property_id: uuid.UUID
+    address: str | None = None
+    city: str | None = None
+    locality: str | None = None
     floors: list[FloorGrid]
 
 
@@ -322,6 +439,114 @@ class InvoiceWithPayments(InvoiceOut):
     payments: list[PaymentOut]
     paid_paise: int
     balance_paise: int
+
+
+# ---------- complaints / notifications / chat ----------
+
+class ComplaintCommentIn(BaseModel):
+    body: str = Field(min_length=1, max_length=2000)
+
+
+class ComplaintStatusIn(BaseModel):
+    status: ComplaintStatus
+
+
+class ComplaintAttachmentOut(ORMModel):
+    id: uuid.UUID
+    original_name: str
+    content_type: str
+    created_at: datetime
+
+
+class ComplaintCommentOut(ORMModel):
+    id: uuid.UUID
+    author_id: uuid.UUID
+    author_name: str | None
+    body: str
+    created_at: datetime
+
+
+class ComplaintStatusHistoryOut(ORMModel):
+    id: uuid.UUID
+    changed_by_user_id: uuid.UUID
+    status: ComplaintStatus
+    created_at: datetime
+
+
+class ComplaintOut(ORMModel):
+    id: uuid.UUID
+    property_id: uuid.UUID
+    property_name: str
+    tenant_id: uuid.UUID
+    tenant_name: str
+    category: ComplaintCategory
+    title: str
+    description: str
+    priority: ComplaintPriority
+    status: ComplaintStatus
+    created_at: datetime
+    updated_at: datetime
+    attachments: list[ComplaintAttachmentOut]
+    comments: list[ComplaintCommentOut]
+    status_history: list[ComplaintStatusHistoryOut]
+
+
+class NotificationOut(ORMModel):
+    id: uuid.UUID
+    title: str
+    body: str
+    complaint_id: uuid.UUID | None
+    created_at: datetime
+    read_at: datetime | None
+
+
+class ConversationOut(BaseModel):
+    id: uuid.UUID
+    property_id: uuid.UUID
+    property_name: str
+    type: ConversationType
+    title: str
+    other_user_id: uuid.UUID | None
+    last_message: str | None
+    last_message_at: datetime | None
+    unread_count: int
+
+
+class ConversationContactOut(BaseModel):
+    user_id: uuid.UUID
+    name: str
+    role: Role
+    room_number: str | None
+    property_id: uuid.UUID
+    property_name: str
+
+
+class ConversationsOut(BaseModel):
+    conversations: list[ConversationOut]
+    contacts: list[ConversationContactOut]
+
+
+class DirectConversationIn(BaseModel):
+    other_user_id: uuid.UUID
+    property_id: uuid.UUID | None = None
+
+
+class MessageIn(BaseModel):
+    body: str = Field(min_length=1, max_length=2000)
+
+
+class MessageOut(BaseModel):
+    id: uuid.UUID
+    conversation_id: uuid.UUID
+    sender_id: uuid.UUID
+    sender_name: str
+    body: str
+    created_at: datetime
+
+
+class MessagePage(BaseModel):
+    messages: list[MessageOut]
+    next_cursor: uuid.UUID | None
 
 
 class DueRow(BaseModel):

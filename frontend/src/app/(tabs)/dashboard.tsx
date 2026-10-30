@@ -1,4 +1,5 @@
 import { api } from "@/lib/api";
+import { SearchBar } from "@/components/SearchBar";
 import { usePg } from "@/lib/pg";
 import { theme } from "@/lib/theme";
 import type { BedStatus } from "@/lib/types";
@@ -75,6 +76,7 @@ export default function Dashboard() {
           <Text style={styles.liveText}>Live</Text>
         </View>
       </View>
+      <SearchBar editable={false} onPress={() => router.push("/search")} />
 
       {error && <Text style={styles.error}>{error}</Text>}
 
@@ -113,14 +115,14 @@ export default function Dashboard() {
         const propTotals = computeTotals([prop]);
         return (
           <View key={prop.id} style={styles.propertyCard}>
-            <Pressable style={styles.propHeader} onPress={() => router.push(`/property/${prop.id}`)}>
+            <Pressable style={styles.propHeader} onPress={() => router.push({ pathname: "/pg/[id]", params: { id: prop.id } })}>
               <View style={styles.propIcon}>
                 <Ionicons name="business-outline" size={18} color={theme.accentText} />
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={styles.propertyName}>{prop.name}</Text>
                 <Text style={styles.propSub}>
-                  {propTotals.occupied}/{propTotals.beds} beds · {propTotals.occupancy_pct}% full
+                  {prop.locality || prop.address || "Location not set"} · {propTotals.occupied}/{propTotals.beds} beds · {propTotals.occupancy_pct}% full
                 </Text>
               </View>
               <Ionicons name="chevron-forward" size={18} color={theme.textLight} />
@@ -216,6 +218,8 @@ export type GridResponse = {
     property_id: string;
     name: string;
     address: string | null;
+    locality: string | null;
+    city: string | null;
     floors: {
       id: string;
       name: string;

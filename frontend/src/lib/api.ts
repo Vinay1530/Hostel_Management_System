@@ -26,6 +26,7 @@ function resolveApiUrl(): string {
 }
 
 export const API_HOST = resolveApiUrl();
+export const WS_HOST = API_HOST.replace(/^http/, "ws");
 export const TOKEN_KEY = "pgms_token";
 
 let token: string | null = null;
@@ -101,6 +102,28 @@ export const api = {
       body: form,
     });
     const data = await res.json();
+    if (!res.ok) throw new ApiError(res.status, data);
+    return data as T;
+  },
+  uploadFiles: async <T>(
+    p: string,
+    files: { uri: string; name: string; type: string }[],
+    fields: Record<string, string>
+  ) => {
+    await initToken();
+
+    const form = new FormData();
+    files.forEach((file) => {
+      form.append("files", { uri: file.uri, name: file.name, type: file.type } as any);
+    });
+    Object.entries(fields).forEach(([key, value]) => form.append(key, value));
+    const res = await fetch(`${API_HOST}${p}`, {
+      method: "POST",
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      body: form,
+    });
+    const contentType = res.headers.get("content-type") ?? "";
+    const data = contentType.includes("application/json") ? await res.json() : await res.text();
     if (!res.ok) throw new ApiError(res.status, data);
     return data as T;
   },

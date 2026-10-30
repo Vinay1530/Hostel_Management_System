@@ -1,4 +1,5 @@
 import { ConfirmDialog, Sheet } from "@/components/ui";
+import { SearchBar } from "@/components/SearchBar";
 import { api } from "@/lib/api";
 import { usePg, Pg } from "@/lib/pg";
 import { FACILITY_OPTIONS, facilityIcon, facilityLabel, theme } from "@/lib/theme";
@@ -23,6 +24,13 @@ type Property = Pg & {
   pro_rate_first_month: boolean;
   notice_period_days: number;
   facilities: string | null;
+  city?: string | null;
+  locality?: string | null;
+  gate_timing?: string | null;
+  food_rules?: string | null;
+  visitor_rules?: string | null;
+  total_beds?: number;
+  occupied_beds?: number;
 };
 
 function facilityChips(text: string | null) {
@@ -93,17 +101,21 @@ export default function Setup() {
     >
       <Text style={styles.h1}>Your PGs</Text>
       <Text style={styles.sub}>Manage buildings, rooms, beds and billing</Text>
+      <SearchBar editable={false} onPress={() => router.push("/search")} />
       {error && <Text style={styles.error}>{error}</Text>}
 
       {properties?.map((p) => (
         <View key={p.id} style={styles.card}>
-          <TouchableOpacity style={styles.propHead} onPress={() => router.push(`/property/${p.id}`)}>
+          <TouchableOpacity style={styles.propHead} onPress={() => router.push({ pathname: "/pg/[id]", params: { id: p.id } })}>
             <View style={styles.propIcon}>
               <Ionicons name="business" size={18} color={theme.accentText} />
             </View>
             <View style={{ flex: 1 }}>
               <Text style={styles.propName}>{p.name}</Text>
-              <Text style={styles.meta}>{p.address ?? "Tap to edit rooms & beds"}</Text>
+              <Text style={styles.meta}>
+                {[p.locality, p.city].filter(Boolean).join(", ") || p.address || "Location not set"}
+                {typeof p.total_beds === "number" ? ` · ${p.occupied_beds ?? 0}/${p.total_beds} beds` : ""}
+              </Text>
             </View>
             <Ionicons name="chevron-forward" size={18} color={theme.textLight} />
           </TouchableOpacity>
@@ -187,6 +199,11 @@ function PropertyEditorModal({
 }) {
   const [name, setName] = useState("");
   const [address, setAddress] = useState("");
+  const [city, setCity] = useState("");
+  const [locality, setLocality] = useState("");
+  const [gateTiming, setGateTiming] = useState("");
+  const [foodRules, setFoodRules] = useState("");
+  const [visitorRules, setVisitorRules] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
 
@@ -194,6 +211,11 @@ function PropertyEditorModal({
     if (property) {
       setName(property.name);
       setAddress(property.address ?? "");
+      setCity(property.city ?? "");
+      setLocality(property.locality ?? "");
+      setGateTiming(property.gate_timing ?? "");
+      setFoodRules(property.food_rules ?? "");
+      setVisitorRules(property.visitor_rules ?? "");
       setSelected(new Set(facilityChips(property.facilities)));
     }
   }, [property]);
@@ -206,6 +228,11 @@ function PropertyEditorModal({
       await api.patch(`/properties/${property!.id}`, {
         name: name.trim(),
         address: address.trim() || null,
+        city: city.trim() || null,
+        locality: locality.trim() || null,
+        gate_timing: gateTiming.trim() || null,
+        food_rules: foodRules.trim() || null,
+        visitor_rules: visitorRules.trim() || null,
         facilities: [...selected].join(","),
       });
       onSaved();
@@ -224,6 +251,16 @@ function PropertyEditorModal({
         <TextInput style={styles.input} value={name} onChangeText={setName} />
         <Text style={styles.fieldLabel}>Address</Text>
         <TextInput style={styles.input} placeholder="Area, city" value={address} onChangeText={setAddress} />
+        <Text style={styles.fieldLabel}>Locality</Text>
+        <TextInput style={styles.input} value={locality} onChangeText={setLocality} />
+        <Text style={styles.fieldLabel}>City</Text>
+        <TextInput style={styles.input} value={city} onChangeText={setCity} />
+        <Text style={styles.fieldLabel}>Gate timing</Text>
+        <TextInput style={styles.input} value={gateTiming} onChangeText={setGateTiming} />
+        <Text style={styles.fieldLabel}>Food rules</Text>
+        <TextInput style={styles.input} value={foodRules} onChangeText={setFoodRules} multiline />
+        <Text style={styles.fieldLabel}>Visitor rules</Text>
+        <TextInput style={styles.input} value={visitorRules} onChangeText={setVisitorRules} multiline />
         <Text style={styles.fieldLabel}>Facilities — auto-attached to every room unless a room was customized</Text>
         <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
           {FACILITY_OPTIONS.map((f) => (

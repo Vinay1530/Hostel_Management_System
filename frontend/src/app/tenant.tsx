@@ -1,7 +1,7 @@
 import { api, rupeesFromPaise } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
-import { Redirect } from "expo-router";
+import { Redirect, useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import { theme } from "@/lib/theme";
 
@@ -30,6 +30,7 @@ type MyOverview = {
 
 export default function TenantHome() {
   const { logout, ready, token } = useAuth();
+  const router = useRouter();
   const [data, setData] = useState<MyOverview | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [mounted, setMounted] = useState(false);
@@ -73,6 +74,18 @@ export default function TenantHome() {
             )}
           </View>
 
+          <View style={styles.actions}>
+            <Pressable style={styles.actionButton} onPress={() => router.push("/complaints/new")}>
+              <Text style={styles.actionText}>Report a problem</Text>
+            </Pressable>
+            <Pressable style={styles.actionButtonSecondary} onPress={() => router.push("/complaints/index")}>
+              <Text style={styles.actionTextSecondary}>My complaints</Text>
+            </Pressable>
+            <Pressable style={styles.actionButtonSecondary} onPress={() => router.push("/chat")}>
+              <Text style={styles.actionTextSecondary}>Chat</Text>
+            </Pressable>
+          </View>
+
           <Text style={styles.h2}>My rent</Text>
           {data.invoices.length === 0 && (
             <Text style={styles.meta}>No bills yet — your manager will generate rent bills.</Text>
@@ -113,6 +126,11 @@ const styles = StyleSheet.create({
   h1: { fontSize: 24, fontWeight: "800", color: theme.text },
   h2: { fontSize: 16, fontWeight: "700", color: theme.text, marginTop: 16, marginBottom: 8 },
   card: { backgroundColor: "#fff", borderRadius: 12, padding: 14, marginBottom: 10, flexDirection: "row" },
+  actions: { gap: 8, marginTop: 2 },
+  actionButton: { backgroundColor: theme.accent, borderRadius: 11, padding: 12, alignItems: "center" },
+  actionText: { color: "#fff", fontWeight: "800" },
+  actionButtonSecondary: { backgroundColor: "#fff", borderRadius: 11, padding: 12, alignItems: "center", borderWidth: 1, borderColor: theme.border },
+  actionTextSecondary: { color: theme.accentText, fontWeight: "800" },
   name: { fontSize: 16, fontWeight: "700", color: theme.text },
   meta: { fontSize: 12, color: theme.textLight, marginTop: 2 },
   logout: { color: theme.accent, fontWeight: "700" },

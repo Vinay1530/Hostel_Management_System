@@ -1,10 +1,11 @@
 import { api, receiptUrl, rupeesFromPaise } from "@/lib/api";
+import { SearchBar } from "@/components/SearchBar";
 import { usePg } from "@/lib/pg";
 import { theme } from "@/lib/theme";
 import { Ionicons } from "@expo/vector-icons";
 import type { InvoiceStatus, PaymentMode } from "@/lib/types";
 import * as Linking from "expo-linking";
-import { useFocusEffect } from "expo-router";
+import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useState } from "react";
 import {
   ActivityIndicator,
@@ -57,6 +58,7 @@ const statusStyles: Record<InvoiceStatus, { bg: string }> = {
 };
 
 export default function Dues() {
+  const router = useRouter();
   const { propertyId, property } = usePg();
   const [dues, setDues] = useState<Dues | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -96,6 +98,7 @@ export default function Dues() {
           <Text style={styles.sub}>{property ? property.name : "All PGs"}</Text>
         </View>
       </View>
+      <SearchBar editable={false} onPress={() => router.push("/search")} />
       <Pressable style={styles.genBtn} onPress={() => setGenOpen(true)}>
         <Ionicons name="flash-outline" size={16} color="#fff" />
         <Text style={styles.genBtnText}> Generate {property ? property.name + "'s" : "month's"} bills</Text>

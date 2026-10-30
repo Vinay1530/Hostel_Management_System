@@ -59,6 +59,15 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
+        name="inbox"
+        options={{
+          title: "Inbox",
+          tabBarIcon: ({ color, size }: { color: string; size: number }) => (
+            <Ionicons name="chatbubbles-outline" color={color} size={size} />
+          ),
+        }}
+      />
+      <Tabs.Screen
         name="setup"
         options={{
           title: "Setup",

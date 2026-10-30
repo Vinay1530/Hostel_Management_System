@@ -1,12 +1,24 @@
 import uuid
 from datetime import date, datetime
 
-from sqlalchemy import Boolean, Date, DateTime, Enum, ForeignKey, Index, Integer, String, Text, UniqueConstraint, Uuid, func
+from sqlalchemy import Boolean, Date, DateTime, Enum, ForeignKey, Index, Integer, String, Text, UniqueConstraint, Uuid, func, text
 from sqlalchemy.dialects.postgresql import UUID as PGUuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.db import Base
-from app.models.enums import BedStatus, BillingCycle, ChargeType, DocType, InvoiceStatus, PaymentMode, Role
+from app.models.enums import (
+    BedStatus,
+    BillingCycle,
+    ChargeType,
+    ComplaintCategory,
+    ComplaintPriority,
+    ComplaintStatus,
+    ConversationType,
+    DocType,
+    InvoiceStatus,
+    PaymentMode,
+    Role,
+)
 
 # Portable UUID type: PG native uuid, sqlite falls back to CHAR(36)
 PortableUuid = PGUuid().with_variant(Uuid, "sqlite")
@@ -64,6 +76,11 @@ class Property(Base):
     organization_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(200))
     address: Mapped[str | None] = mapped_column(Text)
+    city: Mapped[str | None] = mapped_column(String(100))
+    locality: Mapped[str | None] = mapped_column(String(150))
+    gate_timing: Mapped[str | None] = mapped_column(String(200))
+    food_rules: Mapped[str | None] = mapped_column(Text)
+    visitor_rules: Mapped[str | None] = mapped_column(Text)
     advance_or_arrears: Mapped[BillingCycle] = mapped_column(
         Enum(BillingCycle, name="billing_cycle_enum", native_enum=False), default=BillingCycle.advance
     )
@@ -218,3 +235,119 @@ class Charge(Base):
         ForeignKey("rent_invoices.id", ondelete="SET NULL"), default=None
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class Complaint(Base):
+    __tablename__ = "complaints"
+
+    id: Mapped[uuid.UUID] = mapped_column(PortableUuid, primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
+    property_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("properties.id", ondelete="CASCADE"), nullable=False, index=True)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    category: Mapped[ComplaintCategory] = mapped_column(
+        Enum(ComplaintCategory, name="complaint_category_enum", native_enum=False), nullable=False
+    )
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    priority: Mapped[ComplaintPriority] = mapped_column(
+        Enum(ComplaintPriority, name="complaint_priority_enum", native_enum=False), nullable=False
+    )
+    status: Mapped[ComplaintStatus] = mapped_column(
+        Enum(ComplaintStatus, name="complaint_status_enum", native_enum=False), nullable=False, default=ComplaintStatus.open
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class ComplaintAttachment(Base):
+    __tablename__ = "complaint_attachments"
+
+    id: Mapped[uuid.UUID] = mapped_column(PortableUuid, primary_key=True, default=uuid.uuid4)
+    complaint_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("complaints.id", ondelete="CASCADE"), nullable=False, index=True)
+    file_path: Mapped[str] = mapped_column(String(500), nullable=False)
+    original_name: Mapped[str] = mapped_column(String(300), nullable=False)
+    content_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class ComplaintComment(Base):
+    __tablename__ = "complaint_comments"
+
+    id: Mapped[uuid.UUID] = mapped_column(PortableUuid, primary_key=True, default=uuid.uuid4)
+    complaint_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("complaints.id", ondelete="CASCADE"), nullable=False, index=True)
+    author_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class ComplaintStatusHistory(Base):
+    __tablename__ = "complaint_status_history"
+
+    id: Mapped[uuid.UUID] = mapped_column(PortableUuid, primary_key=True, default=uuid.uuid4)
+    complaint_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("complaints.id", ondelete="CASCADE"), nullable=False, index=True)
+    changed_by_user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    status: Mapped[ComplaintStatus] = mapped_column(
+        Enum(ComplaintStatus, name="complaint_status_enum", native_enum=False), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class InAppNotification(Base):
+    __tablename__ = "in_app_notifications"
+
+    id: Mapped[uuid.UUID] = mapped_column(PortableUuid, primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    complaint_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("complaints.id", ondelete="CASCADE"), index=True)
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class Conversation(Base):
+    __tablename__ = "conversations"
+    __table_args__ = (
+        UniqueConstraint("property_id", "direct_user_low_id", "direct_user_high_id", name="uq_conversation_direct_pair"),
+        Index(
+            "uq_conversation_property_channel",
+            "property_id",
+            "type",
+            unique=True,
+            postgresql_where=text("type IN ('announcement', 'group')"),
+            sqlite_where=text("type IN ('announcement', 'group')"),
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(PortableUuid, primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
+    property_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("properties.id", ondelete="CASCADE"), nullable=False, index=True)
+    type: Mapped[ConversationType] = mapped_column(
+        Enum(ConversationType, name="conversation_type_enum", native_enum=False), nullable=False
+    )
+    direct_user_low_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    direct_user_high_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class ConversationParticipant(Base):
+    __tablename__ = "conversation_participants"
+    __table_args__ = (Index("ix_conversation_participants_user_id", "user_id"),)
+
+    conversation_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("conversations.id", ondelete="CASCADE"), primary_key=True
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    last_read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class ChatMessage(Base):
+    __tablename__ = "messages"
+    __table_args__ = (Index("ix_messages_conversation_created_id", "conversation_id", "created_at", "id"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(PortableUuid, primary_key=True, default=uuid.uuid4)
+    conversation_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    sender_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    body: Mapped[str] = mapped_column(String(2000), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)

@@ -1,9 +1,10 @@
 import { ConfirmDialog, Option, Select, Sheet } from "@/components/ui";
+import { SearchBar } from "@/components/SearchBar";
 import { api, rupeesFromPaise } from "@/lib/api";
 import { usePg } from "@/lib/pg";
 import { theme } from "@/lib/theme";
 import { Ionicons } from "@expo/vector-icons";
-import { useFocusEffect } from "expo-router";
+import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
@@ -44,6 +45,7 @@ type Grid = {
 };
 
 export default function Tenants() {
+  const router = useRouter();
   const { propertyId, property, properties } = usePg();
   const [tenants, setTenants] = useState<Tenant[] | null>(null);
   const [bedSpots, setBedSpots] = useState<Record<string, BedSpot>>({});
@@ -114,6 +116,7 @@ export default function Tenants() {
           <Text style={styles.primaryBtnText}>Add</Text>
         </TouchableOpacity>
       </View>
+      <SearchBar editable={false} onPress={() => router.push("/search")} />
 
       {error && <Text style={styles.error}>{error}</Text>}
       {tenants && tenants.length === 0 && (

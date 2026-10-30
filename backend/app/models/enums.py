@@ -46,3 +46,32 @@ class PaymentMode(str, enum.Enum):
     upi_manual = "upi_manual"
     card = "card"
     bank_transfer = "bank_transfer"
+
+
+class ComplaintCategory(str, enum.Enum):
+    water = "water"
+    electricity = "electricity"
+    wifi = "wifi"
+    food = "food"
+    cleaning = "cleaning"
+    maintenance = "maintenance"
+    other = "other"
+
+
+class ComplaintPriority(str, enum.Enum):
+    low = "low"
+    medium = "medium"
+    high = "high"
+
+
+class ComplaintStatus(str, enum.Enum):
+    open = "open"
+    in_progress = "in_progress"
+    resolved = "resolved"
+    closed = "closed"
+
+
+class ConversationType(str, enum.Enum):
+    announcement = "announcement"
+    group = "group"
+    direct = "direct"

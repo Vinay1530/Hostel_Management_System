@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import get_settings
-from app.api import auth, billing, my, properties, tenants
+from app.api import auth, billing, collaboration, my, properties, search, tenants
 
 settings = get_settings()
 
@@ -23,8 +23,10 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(my.router)
 app.include_router(properties.router)
+app.include_router(search.router)
 app.include_router(tenants.router)
 app.include_router(billing.router)
+app.include_router(collaboration.router)
 
 
 @app.get("/health", tags=["meta"])

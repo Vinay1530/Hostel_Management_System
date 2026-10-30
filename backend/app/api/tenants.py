@@ -17,6 +17,7 @@ from app.core.db import get_db
 from app.core.security import AuthContext, ensure_login_user, require_staff
 from app.models.enums import BedStatus, DocType, Role
 from app.models.models import Bed, Floor, Property, Room, Stay, Tenant, TenantDocument
+from app.services.collaboration import sync_tenant_participation
 from app.schemas.schemas import (
     DocumentOut,
     ImportPreview,
@@ -133,6 +134,16 @@ def update_tenant(
 @router.delete("/tenants/{tenant_id}", status_code=204)
 def delete_tenant(tenant_id: uuid.UUID, auth: AuthContext = Depends(require_staff), db: Session = Depends(get_db)):
     t = _own_tenant(db, auth.org_id, tenant_id)
+    active_properties = db.execute(
+        select(Property)
+        .join(Floor, Floor.property_id == Property.id)
+        .join(Room, Room.floor_id == Floor.id)
+        .join(Bed, Bed.room_id == Room.id)
+        .join(Stay, Stay.bed_id == Bed.id)
+        .where(Stay.tenant_id == t.id, Stay.active.is_(True))
+    ).scalars().all()
+    for prop in active_properties:
+        sync_tenant_participation(db, prop, t, joined=False)
     db.delete(t)
     db.commit()
 
@@ -165,6 +176,15 @@ def create_stay(body: StayIn, auth: AuthContext = Depends(require_staff), db: Se
         deposit_paise=body.deposit_paise,
     )
     db.add(stay)
+    db.flush()
+    prop = db.execute(
+        select(Property)
+        .join(Floor, Floor.property_id == Property.id)
+        .join(Room, Room.floor_id == Floor.id)
+        .join(Bed, Bed.room_id == Room.id)
+        .where(Bed.id == bed.id, Property.organization_id == auth.org_id)
+    ).scalar_one()
+    sync_tenant_participation(db, prop, tenant, joined=True)
     db.commit()
     db.refresh(stay)
     return stay
@@ -187,6 +207,12 @@ def end_stay(
         d = date.today()
     stay.end_date = d
     stay.active = False
+    bed = db.get(Bed, stay.bed_id)
+    room = db.get(Room, bed.room_id)
+    floor = db.get(Floor, room.floor_id)
+    prop = db.get(Property, floor.property_id)
+    db.flush()
+    sync_tenant_participation(db, prop, stay.tenant, joined=False)
     db.commit()
     db.refresh(stay)
     return stay
@@ -411,6 +437,15 @@ async def import_execute(
             deposit_paise=int(row["deposit_paise"] or 0),
         )
         db.add(stay)
+        db.flush()
+        prop = db.execute(
+            select(Property)
+            .join(Floor, Floor.property_id == Property.id)
+            .join(Room, Room.floor_id == Floor.id)
+            .join(Bed, Bed.room_id == Room.id)
+            .where(Bed.id == bed.id, Property.organization_id == auth.org_id)
+        ).scalar_one()
+        sync_tenant_participation(db, prop, tenant, joined=True)
         stays_created += 1
 
     db.commit()
