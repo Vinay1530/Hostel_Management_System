@@ -2,7 +2,7 @@ import { api, receiptUrl, rupeesFromPaise } from "@/lib/api";
 import { usePg } from "@/lib/pg";
 import { theme } from "@/lib/theme";
 import { Ionicons } from "@expo/vector-icons";
-import type { InvoiceStatus } from "@/lib/types";
+import type { InvoiceStatus, PaymentMode } from "@/lib/types";
 import * as Linking from "expo-linking";
 import { useFocusEffect } from "expo-router";
 import { useCallback, useState } from "react";
@@ -228,9 +228,15 @@ function GenerateModal({
 
 function PayModal({ row, onClose, onSaved }: { row: DueRow | null; onClose: () => void; onSaved: () => void }) {
   const [amount, setAmount] = useState("");
-  const [mode, setMode] = useState<"cash" | "upi_manual">("cash");
+  const [mode, setMode] = useState<PaymentMode>("cash");
   const [reference, setReference] = useState("");
   const [busy, setBusy] = useState(false);
+  const modeLabels: Record<PaymentMode, string> = {
+    cash: "Cash",
+    upi_manual: "UPI (manual)",
+    card: "Card",
+    bank_transfer: "Bank transfer",
+  };
 
   async function save() {
     if (!row) return;
@@ -269,21 +275,26 @@ function PayModal({ row, onClose, onSaved }: { row: DueRow | null; onClose: () =
                 value={amount}
                 onChangeText={setAmount}
               />
-              <View style={{ flexDirection: "row", gap: 8 }}>
-                {(["cash", "upi_manual"] as const).map((m) => (
+              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+                {(["cash", "upi_manual", "card", "bank_transfer"] as const).map((m) => (
                   <Pressable
                     key={m}
                     style={[styles.modeBtn, mode === m && styles.modeBtnOn]}
                     onPress={() => setMode(m)}
                   >
                     <Text style={{ color: mode === m ? "#fff" : theme.text, fontWeight: "600" }}>
-                      {m === "cash" ? "Cash" : "UPI (manual)"}
+                      {modeLabels[m]}
                     </Text>
                   </Pressable>
                 ))}
               </View>
-              {mode === "upi_manual" && (
-                <TextInput style={styles.input} placeholder="UPI reference / UTR" value={reference} onChangeText={setReference} />
+              {mode !== "cash" && (
+                <TextInput
+                  style={styles.input}
+                  placeholder={mode === "upi_manual" ? "UPI reference / UTR" : `${modeLabels[mode]} reference (optional)`}
+                  value={reference}
+                  onChangeText={setReference}
+                />
               )}
               <Pressable style={styles.primaryBtn} onPress={save} disabled={busy || !amount}>
                 {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryBtnText}>Save payment</Text>}
@@ -327,7 +338,7 @@ const styles = StyleSheet.create({
   modalTitle: { fontSize: 18, fontWeight: "800", color: theme.text },
   modalHelp: { fontSize: 12, color: theme.textLight },
   input: { borderWidth: 1, borderColor: theme.chipBorder, borderRadius: 12, padding: 12, fontSize: 15, color: theme.text },
-  modeBtn: { flex: 1, borderWidth: 1, borderColor: theme.chipBorder, borderRadius: 12, padding: 10, alignItems: "center" },
+  modeBtn: { flexGrow: 1, flexBasis: "45%", borderWidth: 1, borderColor: theme.chipBorder, borderRadius: 12, padding: 10, alignItems: "center" },
   modeBtnOn: { backgroundColor: theme.accentSoft, borderColor: theme.accent },
   primaryBtn: { backgroundColor: theme.accent, borderRadius: 12, padding: 13, alignItems: "center" },
   primaryBtnText: { color: "#fff", fontWeight: "800" },

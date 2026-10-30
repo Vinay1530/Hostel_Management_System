@@ -28,6 +28,7 @@ export const FACILITY_OPTIONS = [
   { key: "parking", label: "Parking", icon: "car-outline" },
   { key: "mess", label: "Mess / Food", icon: "restaurant-outline" },
   { key: "hot-water", label: "Hot Water", icon: "water-outline" },
+  { key: "water-purifier", label: "Water Purifier", icon: "water-outline" },
   { key: "cctv", label: "CCTV", icon: "videocam-outline" },
   { key: "power-backup", label: "Power Backup", icon: "flash-outline" },
   { key: "housekeeping", label: "Housekeeping", icon: "sparkles-outline" },

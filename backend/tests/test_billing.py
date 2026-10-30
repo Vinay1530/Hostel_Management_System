@@ -117,6 +117,35 @@ def test_partial_then_full_payment_flow(api):
     assert r.status_code == 400
 
 
+def test_card_and_bank_transfer_payment_modes(api):
+    token, org_id, ids = make_world(api)
+    h = auth_header(token)
+    _, tenant, stay = setup_tenant(api, h)
+    invoices = api.post("/invoices/generate", headers=h, json={"month": "2026-10"}).json()
+    invoice_id = invoices[0]["id"]
+
+    for mode, reference in (("card", "CARD-123"), ("bank_transfer", "BANK-456")):
+        r = api.post(
+            "/payments",
+            headers=h,
+            json={
+                "invoice_id": invoice_id,
+                "amount_paise": 100000,
+                "mode": mode,
+                "reference": reference,
+            },
+        )
+        assert r.status_code == 201, r.text
+        assert r.json()["mode"] == mode
+        assert r.json()["reference"] == reference
+
+    payments = api.get("/invoices", headers=h).json()[0]["payments"]
+    assert {(payment["mode"], payment["reference"]) for payment in payments} == {
+        ("card", "CARD-123"),
+        ("bank_transfer", "BANK-456"),
+    }
+
+
 def test_dues_dashboard(api):
     token, org_id, ids = make_world(api)
     h = auth_header(token)

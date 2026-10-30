@@ -193,7 +193,7 @@ class Payment(Base):
     invoice_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("rent_invoices.id", ondelete="CASCADE"), nullable=False, index=True)
     amount_paise: Mapped[int] = mapped_column(Integer, nullable=False)
     mode: Mapped[PaymentMode] = mapped_column(
-        Enum(PaymentMode, name="payment_mode_enum", native_enum=False), default=PaymentMode.cash
+        Enum(PaymentMode, name="payment_mode_enum", native_enum=False, length=20), default=PaymentMode.cash
     )
     reference: Mapped[str | None] = mapped_column(String(200))
     received_by_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))

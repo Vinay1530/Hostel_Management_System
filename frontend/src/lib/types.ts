@@ -2,11 +2,12 @@ export type BedStatus = "vacant" | "occupied" | "maintenance";
 export type Role = "owner" | "manager" | "tenant";
 export type InvoiceStatus = "pending" | "partial" | "paid" | "void";
 export type BillingCycle = "advance" | "arrears";
+export type PaymentMode = "cash" | "upi_manual" | "card" | "bank_transfer";
 
 export type Payment = {
   id: string;
   amount_paise: number;
-  mode: string;
+  mode: PaymentMode;
   reference: string | null;
   paid_at: string;
 };

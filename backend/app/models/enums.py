@@ -44,3 +44,5 @@ class InvoiceStatus(str, enum.Enum):
 class PaymentMode(str, enum.Enum):
     cash = "cash"
     upi_manual = "upi_manual"
+    card = "card"
+    bank_transfer = "bank_transfer"
