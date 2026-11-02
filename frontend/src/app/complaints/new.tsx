@@ -86,7 +86,7 @@ export default function ReportProblemScreen() {
         <Text style={styles.backText}>My complaints</Text>
       </Pressable>
       <Text style={styles.title}>Report a problem</Text>
-      <Text style={styles.subtitle}>Your property manager will be notified.</Text>
+      <Text style={styles.subtitle}>Your PG manager will be notified.</Text>
 
       <Text style={styles.label}>Category</Text>
       <View style={styles.wrap}>

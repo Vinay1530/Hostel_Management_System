@@ -14,6 +14,8 @@ from app.models.enums import (
     DocType,
     InvoiceStatus,
     PaymentMode,
+    RequestKind,
+    RequestStatus,
     Role,
 )
 
@@ -347,6 +349,8 @@ class StayOut(ORMModel):
     bed_id: uuid.UUID
     start_date: date | None
     end_date: date | None
+    notice_start_date: date | None = None
+    notice_end_date: date | None = None
     agreed_rent_paise: int
     deposit_paise: int
     active: bool
@@ -496,6 +500,7 @@ class NotificationOut(ORMModel):
     title: str
     body: str
     complaint_id: uuid.UUID | None
+    request_id: uuid.UUID | None = None
     created_at: datetime
     read_at: datetime | None
 
@@ -579,3 +584,136 @@ class DuesSummary(BaseModel):
 class DuesOut(BaseModel):
     summary: DuesSummary
     rows: list[DueRow]
+
+
+# ---------- change / booking requests ----------
+
+class ChangeRequestIn(BaseModel):
+    """Tenant change request: deepest non-null id defines the specificity;
+    every level must be an ancestor of the next (or null)."""
+    building_id: uuid.UUID | None = None
+    floor_id: uuid.UUID | None = None
+    room_id: uuid.UUID | None = None
+    bed_id: uuid.UUID | None = None
+    note: str | None = Field(None, max_length=2000)
+
+
+class GuestBookingIn(BaseModel):
+    org_id: uuid.UUID
+    guest_name: str = Field(min_length=1, max_length=200)
+    guest_phone: str = Field(pattern=r"^\d{10,15}$")
+    building_id: uuid.UUID | None = None
+    floor_id: uuid.UUID | None = None
+    room_id: uuid.UUID | None = None
+    bed_id: uuid.UUID | None = None
+    note: str | None = Field(None, max_length=2000)
+
+
+class RequestDecisionIn(BaseModel):
+    status: RequestStatus
+
+    model_config = ConfigDict(use_enum_values=True)
+
+
+class RequestOut(ORMModel):
+    id: uuid.UUID
+    kind: RequestKind
+    status: RequestStatus
+    tenant_id: uuid.UUID | None
+    guest_name: str | None
+    guest_phone: str | None
+    building_id: uuid.UUID | None
+    floor_id: uuid.UUID | None
+    room_id: uuid.UUID | None
+    bed_id: uuid.UUID | None
+    note: str | None
+    created_at: datetime
+    decided_at: datetime | None
+    # resolved labels for display
+    tenant_name: str | None = None
+    building_name: str | None = None
+    floor_name: str | None = None
+    room_number: str | None = None
+    bed_label: str | None = None
+
+
+# ---------- public (guest) ----------
+
+class PublicBed(BaseModel):
+    id: uuid.UUID
+    label: str
+    rent_paise: int
+    deposit_paise: int
+
+
+class PublicRoom(BaseModel):
+    id: uuid.UUID
+    number: str
+    vacant_beds: list[PublicBed] = []
+    vacant_count: int
+
+
+class PublicFloor(BaseModel):
+    id: uuid.UUID
+    name: str
+    total_rooms: int
+    total_beds: int
+    vacant_count: int
+    rooms: list[PublicRoom] = []
+
+
+class PublicBuilding(BaseModel):
+    id: uuid.UUID
+    name: str
+    address: str | None
+    city: str | None
+    locality: str | None
+    facilities: str | None
+    floors_count: int
+    rooms_count: int
+    beds_count: int
+    vacant_count: int
+    rent_min_paise: int | None
+    rent_max_paise: int | None
+    floors: list[PublicFloor] = []
+
+
+class PublicPgSummary(BaseModel):
+    id: uuid.UUID
+    name: str
+    buildings_count: int
+    beds_count: int
+    vacant_count: int
+    rent_min_paise: int | None
+    rent_max_paise: int | None
+    city: str | None
+
+
+class PublicPgDetail(BaseModel):
+    id: uuid.UUID
+    name: str
+    contact_phone: str | None
+    buildings: list[PublicBuilding] = []
+
+
+# ---------- my (tenant) additions ----------
+
+class MyPayment(BaseModel):
+    payment_id: uuid.UUID
+    amount_paise: int
+    mode: PaymentMode
+    reference: str | None
+    paid_at: datetime
+
+
+class MyTransactionRow(ORMModel):
+    invoice_id: uuid.UUID
+    period_month: str
+    period_start: date
+    period_end: date
+    amount_paise: int
+    paid_paise: int
+    balance_paise: int
+    due_date: date
+    status: InvoiceStatus
+    payments: list[MyPayment] = []

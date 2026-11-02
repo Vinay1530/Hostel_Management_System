@@ -11,6 +11,14 @@ export default function InboxScreen() {
       <Text style={styles.title}>Communications</Text>
       <Text style={styles.subtitle}>Stay on top of tenant reports and messages.</Text>
       <SearchBar editable={false} onPress={() => router.push("/search")} />
+      <Pressable style={styles.card} onPress={() => router.push("/requests" as any)}>
+        <View style={styles.icon}><Ionicons name="git-pull-request-outline" size={22} color={theme.accentText} /></View>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.cardTitle}>Tenant requests</Text>
+          <Text style={styles.meta}>Bed / room change and guest booking requests.</Text>
+        </View>
+        <Ionicons name="chevron-forward" size={18} color={theme.textLight} />
+      </Pressable>
       <Pressable style={styles.card} onPress={() => router.push("/complaints")}>
         <View style={styles.icon}><Ionicons name="construct-outline" size={22} color={theme.accentText} /></View>
         <View style={{ flex: 1 }}>

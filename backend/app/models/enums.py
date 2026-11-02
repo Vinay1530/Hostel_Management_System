@@ -75,3 +75,16 @@ class ConversationType(str, enum.Enum):
     announcement = "announcement"
     group = "group"
     direct = "direct"
+
+
+class RequestKind(str, enum.Enum):
+    change = "change"        # tenant asks for bed/room/floor/building change
+    booking = "booking"      # guest asks to book a bed
+
+
+class RequestStatus(str, enum.Enum):
+    open = "open"
+    approved = "approved"
+    rejected = "rejected"
+    moved = "moved"
+    completed = "completed"

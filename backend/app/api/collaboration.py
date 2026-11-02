@@ -28,6 +28,7 @@ from app.models.models import (
     ComplaintStatusHistory,
     Conversation,
     ConversationParticipant,
+    ChangeRequest,
     Floor,
     InAppNotification,
     Membership,
@@ -59,6 +60,7 @@ from app.services.collaboration import (
     property_for_staff,
     require_conversation_participant,
 )
+from app.services.notify import notify_staff
 
 router = APIRouter(tags=["complaints", "chat"])
 
@@ -222,6 +224,14 @@ async def create_complaint(
         )
     db.commit()
     db.refresh(complaint)
+    notify_staff(
+        db,
+        auth.org_id,
+        f"New {priority.value} priority report",
+        f"{tenant.full_name}: {title}",
+        complaint_id=complaint.id,
+    )
+    db.commit()
     return _complaint_out(db, complaint)
 
 
@@ -359,9 +369,19 @@ def list_notifications(
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Tenant access required")
     return db.execute(
         select(InAppNotification)
-        .join(Complaint, Complaint.id == InAppNotification.complaint_id)
-        .where(InAppNotification.user_id == auth.user.id)
-        .where(Complaint.organization_id == auth.org_id)
+        .outerjoin(Complaint, Complaint.id == InAppNotification.complaint_id)
+        .outerjoin(ChangeRequest, ChangeRequest.id == InAppNotification.request_id)
+        .where(
+            InAppNotification.user_id == auth.user.id,
+            or_(
+                Complaint.organization_id == auth.org_id,
+                ChangeRequest.organization_id == auth.org_id,
+                and_(
+                    InAppNotification.complaint_id.is_(None),
+                    InAppNotification.request_id.is_(None),
+                ),
+            ),
+        )
         .order_by(InAppNotification.created_at.desc())
         .limit(50)
     ).scalars().all()
@@ -375,11 +395,19 @@ def mark_notification_read(
 ):
     notification = db.execute(
         select(InAppNotification)
-        .join(Complaint, Complaint.id == InAppNotification.complaint_id)
+        .outerjoin(Complaint, Complaint.id == InAppNotification.complaint_id)
+        .outerjoin(ChangeRequest, ChangeRequest.id == InAppNotification.request_id)
         .where(
             InAppNotification.id == notification_id,
             InAppNotification.user_id == auth.user.id,
-            Complaint.organization_id == auth.org_id,
+            or_(
+                Complaint.organization_id == auth.org_id,
+                ChangeRequest.organization_id == auth.org_id,
+                and_(
+                    InAppNotification.complaint_id.is_(None),
+                    InAppNotification.request_id.is_(None),
+                ),
+            ),
         )
     ).scalar_one_or_none()
     if notification is None:

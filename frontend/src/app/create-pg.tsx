@@ -84,7 +84,7 @@ export default function CreatePG() {
       router.replace(`/property/${layout.property_id}`);
     } catch (e: any) {
       submitted.current = false; // allow retry after a failure
-      Alert.alert("Error", e?.message ?? "Could not create PG");
+      Alert.alert("Error", e?.message ?? "Could not create building");
     } finally {
       setBusy(false);
     }
@@ -96,7 +96,7 @@ export default function CreatePG() {
         <Pressable onPress={() => router.back()} style={styles.backBtn}>
           <Ionicons name="chevron-back" size={22} color={theme.text} />
         </Pressable>
-        <Text style={styles.h1}>Create your PG</Text>
+        <Text style={styles.h1}>Add building</Text>
       </View>
 
       {/* step dots */}
@@ -109,7 +109,7 @@ export default function CreatePG() {
       {step === 1 && (
         <>
           <View style={styles.card}>
-            <Text style={styles.label}>PG name</Text>
+            <Text style={styles.label}>Building name</Text>
             <TextInput style={styles.input} placeholder="e.g. Sunshine Residency" value={name} onChangeText={setName} />
             <Text style={styles.label}>Address (optional)</Text>
             <TextInput style={styles.input} placeholder="Area, city" value={address} onChangeText={setAddress} />
@@ -120,7 +120,7 @@ export default function CreatePG() {
                 <FacilityChip key={f.key} icon={f.icon} label={f.label} selected={facilities.has(f.key)} onPress={() => toggleFacility(f.key)} />
               ))}
             </View>
-            <Text style={styles.noteText}>These PG-level facilities are auto-attached to every room. You can change them per-room later.</Text>
+            <Text style={styles.noteText}>These building-level facilities are auto-attached to every room. You can change them per-room later.</Text>
           </View>
 
           <Pressable style={[styles.cta, !name.trim() && styles.ctaDisabled]} disabled={!name.trim()} onPress={() => setStep(2)}>

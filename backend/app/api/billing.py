@@ -36,6 +36,7 @@ from app.schemas.schemas import (
 )
 from app.services import billing as engine
 from app.services.receipts import render_receipt_pdf
+from app.services.notify import notify_staff
 
 router = APIRouter(tags=["billing"])
 
@@ -159,6 +160,18 @@ def record_payment(body: PaymentIn, auth: AuthContext = Depends(require_staff), 
     db.commit()
     engine.refresh_invoice_status(db, invoice)
     db.refresh(payment)
+
+    tenant = invoice.stay.tenant if invoice.stay else None
+    room = db.get(Room, invoice.stay.bed.room_id) if invoice.stay else None
+    notify_staff(
+        db,
+        auth.org_id,
+        "Payment received",
+        f"{tenant.full_name if tenant else 'Someone'} paid ₹{(body.amount_paise) / 100:,.0f}"
+        + (f" (Room {room.number})" if room else "")
+        + f" · {body.mode.value}",
+    )
+    db.commit()
     return payment
 
 

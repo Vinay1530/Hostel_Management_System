@@ -64,6 +64,7 @@ def search(
     pgs: list[SearchPropertyResult] = []
     rooms: list[SearchRoomResult] = []
     tenants: list[SearchTenantResult] = []
+    tenant_property_ids: list[uuid.UUID] = []
 
     if "pg" in requested:
         stmt = (
@@ -161,6 +162,41 @@ def search(
                 room_number=room_number,
             )
             for tenant, prop_id, property_name, room_number in db.execute(stmt).all()
+        ]
+        tenant_property_ids = list({t.property_id for t in tenants if t.property_id})
+
+    if "pg" in requested and tenant_property_ids:
+        stmt = (
+            select(
+                Property,
+                func.count(func.distinct(Bed.id)).label("total_beds"),
+                func.count(func.distinct(Stay.bed_id)).label("occupied_beds"),
+            )
+            .outerjoin(Floor, Floor.property_id == Property.id)
+            .outerjoin(Room, Room.floor_id == Floor.id)
+            .outerjoin(Bed, Bed.room_id == Room.id)
+            .outerjoin(Stay, (Stay.bed_id == Bed.id) & Stay.active.is_(True))
+            .where(
+                Property.organization_id == auth.org_id,
+                Property.id.in_(tenant_property_ids),
+                Property.id.notin_([p.id for p in pgs]),
+            )
+            .group_by(Property.id)
+            .order_by(Property.name)
+            .limit(10)
+        )
+        if not is_staff:
+            stmt = stmt.where(Property.id == property_id) if property_id else stmt.where(False)
+        pgs += [
+            SearchPropertyResult(
+                id=prop.id,
+                name=prop.name,
+                locality=prop.locality,
+                city=prop.city,
+                occupied_beds=occupied,
+                total_beds=total,
+            )
+            for prop, total, occupied in db.execute(stmt).all()
         ]
 
     return SearchOut(pgs=pgs, rooms=rooms, tenants=tenants)

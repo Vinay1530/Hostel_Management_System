@@ -1,5 +1,5 @@
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 
 from sqlalchemy import Boolean, Date, DateTime, Enum, ForeignKey, Index, Integer, String, Text, UniqueConstraint, Uuid, func, text
 from sqlalchemy.dialects.postgresql import UUID as PGUuid
@@ -17,6 +17,8 @@ from app.models.enums import (
     DocType,
     InvoiceStatus,
     PaymentMode,
+    RequestKind,
+    RequestStatus,
     Role,
 )
 
@@ -168,6 +170,8 @@ class Stay(Base):
     bed_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("beds.id", ondelete="CASCADE"), nullable=False, index=True)
     start_date: Mapped[date] = mapped_column(Date, nullable=False)
     end_date: Mapped[date | None] = mapped_column(Date)
+    notice_start_date: Mapped[date | None] = mapped_column(Date)
+    notice_end_date: Mapped[date | None] = mapped_column(Date)
     agreed_rent_paise: Mapped[int] = mapped_column(Integer, nullable=False)
     deposit_paise: Mapped[int] = mapped_column(Integer, default=0)
     active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
@@ -289,7 +293,12 @@ class ComplaintStatusHistory(Base):
     status: Mapped[ComplaintStatus] = mapped_column(
         Enum(ComplaintStatus, name="complaint_status_enum", native_enum=False), nullable=False
     )
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        server_default=func.now(),
+        nullable=False,
+    )
 
 
 class InAppNotification(Base):
@@ -298,6 +307,9 @@ class InAppNotification(Base):
     id: Mapped[uuid.UUID] = mapped_column(PortableUuid, primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     complaint_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("complaints.id", ondelete="CASCADE"), index=True)
+    request_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("change_requests.id", ondelete="SET NULL"), index=True
+    )
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     body: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
@@ -351,3 +363,38 @@ class ChatMessage(Base):
     sender_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     body: Mapped[str] = mapped_column(String(2000), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class ChangeRequest(Base):
+    """Bed-booking (guest) and bed/room/floor/building-change (tenant) requests."""
+
+    __tablename__ = "change_requests"
+
+    id: Mapped[uuid.UUID] = mapped_column(PortableUuid, primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    kind: Mapped[RequestKind] = mapped_column(
+        Enum(RequestKind, name="request_kind_enum", native_enum=False), default=RequestKind.change, index=True
+    )
+    tenant_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), index=True
+    )
+    guest_name: Mapped[str | None] = mapped_column(String(200))
+    guest_phone: Mapped[str | None] = mapped_column(String(20))
+    # preference specificity: deepest non-null id wins ("anywhere" = all null)
+    building_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("properties.id", ondelete="SET NULL"), index=True
+    )
+    floor_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("floors.id", ondelete="SET NULL"))
+    room_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("rooms.id", ondelete="SET NULL"))
+    bed_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("beds.id", ondelete="SET NULL"))
+    note: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[RequestStatus] = mapped_column(
+        Enum(RequestStatus, name="request_status_enum", native_enum=False),
+        default=RequestStatus.open,
+        index=True,
+    )
+    decided_by_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

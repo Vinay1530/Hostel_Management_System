@@ -121,6 +121,13 @@ export default function Login() {
         </Pressable>
 
         {error && <Text style={styles.error}>{error}</Text>}
+
+        {mode === "login" && (
+          <Pressable style={styles.guestLink} onPress={() => router.push("/guest")}>
+            <Ionicons name="compass-outline" size={16} color={theme.accentText} />
+            <Text style={styles.guestText}>Looking for a bed? Browse PGs as a guest</Text>
+          </Pressable>
+        )}
       </View>
     </KeyboardAvoidingView>
   );
@@ -143,5 +150,16 @@ const styles = StyleSheet.create({
   button: { backgroundColor: theme.accent, borderRadius: 12, padding: 14, alignItems: "center", marginTop: 4 },
   buttonText: { color: "#fff", fontWeight: "800", fontSize: 16 },
   hint: { fontSize: 11, color: theme.warn, marginBottom: 4 },
+  guestLink: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    marginTop: 12,
+    paddingVertical: 10,
+    borderRadius: 12,
+    backgroundColor: theme.chipBg,
+  },
+  guestText: { fontSize: 13, fontWeight: "700", color: theme.accentText },
   error: { color: theme.danger, marginTop: 10, textAlign: "center" },
 });

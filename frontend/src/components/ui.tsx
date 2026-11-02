@@ -1,6 +1,9 @@
 import { usePg } from "@/lib/pg";
+import { useAuth } from "@/lib/auth";
+import { useNotifications } from "@/lib/notifications";
 import { theme } from "@/lib/theme";
 import { Ionicons } from "@expo/vector-icons";
+import { useRouter } from "expo-router";
 import { useState } from "react";
 import {
   Modal,
@@ -174,7 +177,7 @@ export function ActionSheet({
 export function PgSelector({ compact }: { compact?: boolean }) {
   const { properties, propertyId, setPropertyId } = usePg();
   const options: Option[] = [
-    { value: "__all__", label: "All PGs", sublabel: "Aggregated stats across every PG" },
+    { value: "__all__", label: "All buildings", sublabel: "Aggregated stats across every building" },
     ...properties.map((p) => ({ value: p.id, label: p.name, sublabel: p.address ?? undefined })),
   ];
   return (
@@ -182,13 +185,18 @@ export function PgSelector({ compact }: { compact?: boolean }) {
       value={propertyId ?? "__all__"}
       options={options}
       onChange={(v) => setPropertyId(v === "__all__" ? null : v)}
-      title="Viewing"
+      title="Building"
       compact={compact}
     />
   );
 }
 
 export function TopBar() {
+  const { role } = useAuth();
+  const { unread } = useNotifications();
+  const router = useRouter();
+  const [confirmOut, setConfirmOut] = useState(false);
+  const { logout } = useAuth();
   return (
     <View style={styles.topBar}>
       <View style={styles.brand}>
@@ -198,9 +206,33 @@ export function TopBar() {
         <Text style={styles.brandText}>PG Rent</Text>
       </View>
       <View style={{ flex: 1 }} />
-      <View style={{ maxWidth: 220 }}>
-        <PgSelector compact />
-      </View>
+      {role !== "tenant" && (
+        <View style={{ maxWidth: 220 }}>
+          <PgSelector compact />
+        </View>
+      )}
+      <TouchableOpacity style={styles.iconBtn} onPress={() => router.push("/notifications")}>
+        <Ionicons name="notifications-outline" size={20} color={theme.text} />
+        {unread > 0 && (
+          <View style={styles.badge}>
+            <Text style={styles.badgeText}>{unread > 9 ? "9+" : unread}</Text>
+          </View>
+        )}
+      </TouchableOpacity>
+      <TouchableOpacity style={styles.iconBtn} onPress={() => setConfirmOut(true)}>
+        <Ionicons name="log-out-outline" size={20} color={theme.danger} />
+      </TouchableOpacity>
+      <ConfirmDialog
+        visible={confirmOut}
+        title="Sign out?"
+        message="You can log back in anytime with your phone number and password."
+        confirmLabel="Sign out"
+        onCancel={() => setConfirmOut(false)}
+        onConfirm={() => {
+          setConfirmOut(false);
+          logout().then(() => router.replace("/login"));
+        }}
+      />
     </View>
   );
 }
@@ -225,6 +257,29 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   brandText: { fontSize: 17, fontWeight: "800", color: theme.text },
+  iconBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 12,
+    backgroundColor: "#fff",
+    borderWidth: 1,
+    borderColor: theme.border,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  badge: {
+    position: "absolute",
+    top: -4,
+    right: -4,
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: theme.danger,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 4,
+  },
+  badgeText: { color: "#fff", fontSize: 10, fontWeight: "800" },
   backdrop: { flex: 1, backgroundColor: "#0f1e2944", justifyContent: "flex-end" },
   centerBackdrop: {
     flex: 1,
@@ -241,8 +296,8 @@ const styles = StyleSheet.create({
     paddingBottom: 26,
     width: "100%",
     maxWidth: 560,
+    maxHeight: "90%",
     alignSelf: "center",
-    gap: 6,
   },
   sheetTitle: { fontSize: 15, fontWeight: "800", color: theme.textLight, marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.4 },
   sheetMessage: { fontSize: 13, color: theme.textLight, marginBottom: 8 },

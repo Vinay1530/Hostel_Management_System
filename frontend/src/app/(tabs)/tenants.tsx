@@ -34,13 +34,13 @@ type Tenant = {
   }[];
 };
 
-type BedSpot = { property: string; room: string; bed: string; status: string; tenantName: string | null };
+type BedSpot = { property: string; propertyId: string; floorId: string; floorName: string; room: string; bed: string; status: string; tenantName: string | null };
 
 type Grid = {
   properties: {
     id: string;
     name: string;
-    floors: { rooms: { number: string; beds: { id: string; label: string; status: string; tenant_name: string | null }[] }[] }[];
+    floors: { id: string; name: string; rooms: { number: string; beds: { id: string; label: string; status: string; tenant_name: string | null }[] }[] }[];
   }[];
 };
 
@@ -54,6 +54,36 @@ export default function Tenants() {
   const [importOpen, setImportOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [toDelete, setToDelete] = useState<Tenant | null>(null);
+  const [filterText, setFilterText] = useState("");
+  const [filterBuildingId, setFilterBuildingId] = useState<string | null>(null);
+  const [filterFloorName, setFilterFloorName] = useState<string | null>(null);
+  const [filterRoomNumber, setFilterRoomNumber] = useState<string | null>(null);
+  const [gridData, setGridData] = useState<Grid | null>(null);
+
+  function shownList(list: Tenant[]): Tenant[] {
+    const q = filterText.trim().toLowerCase();
+    return list.filter((t) => {
+      const active = t.stays?.find((s) => s.active);
+      const spot = active ? bedSpots[active.bed_id] : undefined;
+
+      if (filterBuildingId && filterBuildingId !== "__all__") {
+        if (!spot || spot.propertyId !== filterBuildingId) return false;
+      }
+      if (filterFloorName && filterFloorName !== "__all__") {
+        if (!spot || spot.floorName !== filterFloorName) return false;
+      }
+      if (filterRoomNumber && filterRoomNumber !== "__all__") {
+        if (!spot || spot.room !== filterRoomNumber) return false;
+      }
+
+      if (!q) return true;
+      return (
+        t.full_name.toLowerCase().includes(q) ||
+        t.phone.includes(q) ||
+        (spot ? `${spot.room} ${spot.bed} ${spot.property}`.toLowerCase().includes(q) : false)
+      );
+    });
+  }
 
   const load = useCallback(async () => {
     try {
@@ -64,12 +94,22 @@ export default function Tenants() {
         api.get<Grid>("/occupancy-grid"),
       ]);
       setTenants(t);
+      setGridData(g);
       const map: Record<string, BedSpot> = {};
       for (const p of g.properties)
         for (const f of p.floors)
           for (const r of f.rooms)
             for (const b of r.beds)
-              map[b.id] = { property: p.name, room: r.number, bed: b.label, status: b.status, tenantName: b.tenant_name };
+              map[b.id] = {
+                property: p.name,
+                propertyId: p.id,
+                floorId: f.id,
+                floorName: f.name,
+                room: r.number,
+                bed: b.label,
+                status: b.status,
+                tenantName: b.tenant_name,
+              };
       setBedSpots(map);
     } catch (e: any) {
       setError(e?.message ?? "Failed to load tenants");
@@ -117,8 +157,80 @@ export default function Tenants() {
         </TouchableOpacity>
       </View>
       <SearchBar editable={false} onPress={() => router.push("/search")} />
+      <View style={{ marginTop: 8 }}>
+        <SearchBar value={filterText} onChangeText={setFilterText} placeholder="Filter by tenant name, phone, room…" />
+      </View>
+
+      <View style={{ backgroundColor: "#fff", borderRadius: 14, padding: 12, marginTop: 8, borderWidth: 1, borderColor: theme.border, gap: 8 }}>
+        <Text style={{ fontSize: 11, fontWeight: "800", color: theme.textLight, textTransform: "uppercase", letterSpacing: 0.4 }}>Filter by location</Text>
+        <View style={{ flexDirection: "row", gap: 6 }}>
+          <View style={{ flex: 1 }}>
+            <Select
+              compact
+              value={filterBuildingId ?? "__all__"}
+              options={[
+                { value: "__all__", label: "All buildings" },
+                ...(gridData?.properties.map((p) => ({ value: p.id, label: p.name })) ?? []),
+              ]}
+              onChange={(v) => {
+                setFilterBuildingId(v === "__all__" ? null : v);
+                setFilterFloorName(null);
+                setFilterRoomNumber(null);
+              }}
+              title="Building"
+              placeholder="All buildings"
+            />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Select
+              compact
+              value={filterFloorName ?? "__all__"}
+              options={[
+                { value: "__all__", label: "All floors" },
+                ...Array.from(
+                  new Set(
+                    (gridData?.properties ?? [])
+                      .filter((p) => (!filterBuildingId || filterBuildingId === "__all__" ? true : p.id === filterBuildingId))
+                      .flatMap((p) => p.floors.map((f) => f.name))
+                  )
+                ).map((fn) => ({ value: fn, label: `${fn} floor` })),
+              ]}
+              onChange={(v) => {
+                setFilterFloorName(v === "__all__" ? null : v);
+                setFilterRoomNumber(null);
+              }}
+              title="Floor"
+              placeholder="All floors"
+            />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Select
+              compact
+              value={filterRoomNumber ?? "__all__"}
+              options={[
+                { value: "__all__", label: "All rooms" },
+                ...Array.from(
+                  new Set(
+                    (gridData?.properties ?? [])
+                      .filter((p) => (!filterBuildingId || filterBuildingId === "__all__" ? true : p.id === filterBuildingId))
+                      .flatMap((p) => p.floors)
+                      .filter((f) => (!filterFloorName || filterFloorName === "__all__" ? true : f.name === filterFloorName))
+                      .flatMap((f) => f.rooms.map((r) => r.number))
+                  )
+                ).map((rn) => ({ value: rn, label: `Room ${rn}` })),
+              ]}
+              onChange={(v) => setFilterRoomNumber(v === "__all__" ? null : v)}
+              title="Room"
+              placeholder="All rooms"
+            />
+          </View>
+        </View>
+      </View>
 
       {error && <Text style={styles.error}>{error}</Text>}
+      {tenants && shownList(tenants).length === 0 && filterText.trim().length > 0 && (
+        <Text style={{ fontSize: 12, color: theme.textLight, marginTop: 6 }}>No tenants match “{filterText}”.</Text>
+      )}
       {tenants && tenants.length === 0 && (
         <View style={styles.emptyCard}>
           <Ionicons name="people-outline" size={26} color={theme.textLight} />
@@ -127,7 +239,7 @@ export default function Tenants() {
         </View>
       )}
 
-      {tenants?.map((t) => {
+      {shownList(tenants ?? []).map((t) => {
         const active = t.stays?.find((s) => s.active);
         const spot = active ? bedSpots[active.bed_id] : undefined;
         return (
@@ -320,8 +432,8 @@ function AddTenantModal({
         />
 
         <Text style={styles.sectionLabel}>Assign to a bed (optional)</Text>
-        <Text style={styles.fieldLabel}>PG</Text>
-        <Select value={pgId} options={properties} onChange={setPgId} placeholder="Select PG" title="Choose PG" />
+        <Text style={styles.fieldLabel}>Building</Text>
+        <Select value={pgId} options={properties} onChange={setPgId} placeholder="Select building" title="Choose building" />
         <Text style={styles.fieldLabel}>Floor</Text>
         <Select value={floorId} options={floors} onChange={setFloorId} placeholder="Select floor" title="Choose floor" />
         <Text style={styles.fieldLabel}>Room</Text>
@@ -335,11 +447,19 @@ function AddTenantModal({
         )}
 
         {error && <Text style={styles.error}>{error}</Text>}
-        <View style={{ flexDirection: "row", gap: 8, marginTop: 6 }}>
-          <TouchableOpacity style={[styles.primaryBtn, { flex: 1, justifyContent: "center", paddingVertical: 14 }]} onPress={save} disabled={busy || !fullName.trim() || phone.length < 10}>
+        <View style={{ flexDirection: "row", gap: 8, marginTop: 12, paddingBottom: 24 }}>
+          <TouchableOpacity
+            style={[
+              styles.primaryBtn,
+              { flex: 1, justifyContent: "center", paddingVertical: 14 },
+              (!fullName.trim() || phone.length < 10) && { opacity: 0.5 },
+            ]}
+            onPress={save}
+            disabled={busy || !fullName.trim() || phone.length < 10}
+          >
             {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryBtnText}>Save tenant</Text>}
           </TouchableOpacity>
-          <TouchableOpacity style={[styles.cancelBtn, { flex: 1 }]} onPress={onClose}>
+          <TouchableOpacity style={[styles.cancelBtn, { flex: 1, paddingVertical: 14 }]} onPress={onClose}>
             <Text style={styles.cancelBtnText}>Cancel</Text>
           </TouchableOpacity>
         </View>
@@ -383,57 +503,59 @@ function ImportModal({ visible, onClose, onDone }: { visible: boolean; onClose: 
 
   return (
     <Sheet visible={visible} onClose={onClose}>
-      <Text style={styles.modalTitle}>Import tenants</Text>
-      <Text style={styles.modalHelp}>
-        Columns: full_name, phone, property_name, floor_name, room_number, bed_label, start_date, agreed_rent_paise, deposit_paise
-      </Text>
-      <TouchableOpacity style={styles.cancelBtn} onPress={pick}>
-        <Text style={styles.cancelBtnText}>{file ? `Selected: ${file.name}` : "Pick CSV file"}</Text>
-      </TouchableOpacity>
-      {!preview && !result && (
-        <TouchableOpacity style={[styles.primaryBtn, { justifyContent: "center", opacity: !file || busy ? 0.5 : 1 }]} disabled={!file || busy} onPress={() => runDry("preview")}>
-          {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryBtnText}>Validate (dry run)</Text>}
+      <View style={{ gap: 8, paddingBottom: 16 }}>
+        <Text style={styles.modalTitle}>Import tenants</Text>
+        <Text style={styles.modalHelp}>
+          Columns: full_name, phone, property_name, floor_name, room_number, bed_label, start_date, agreed_rent_paise, deposit_paise
+        </Text>
+        <TouchableOpacity style={styles.cancelBtn} onPress={pick}>
+          <Text style={styles.cancelBtnText}>{file ? `Selected: ${file.name}` : "Pick CSV file"}</Text>
         </TouchableOpacity>
-      )}
-      {preview && !result && (
-        <ScrollView style={{ maxHeight: 180 }}>
-          <Text style={{ fontWeight: "700", color: theme.text }}>Valid rows: {preview.valid_rows.length}</Text>
-          {preview.errors.map((e, i) => (
-            <Text key={i} style={{ color: theme.danger, fontSize: 12 }}>
-              Row {e.row}: {e.error}
+        {!preview && !result && (
+          <TouchableOpacity style={[styles.primaryBtn, { justifyContent: "center", opacity: !file || busy ? 0.5 : 1 }]} disabled={!file || busy} onPress={() => runDry("preview")}>
+            {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryBtnText}>Validate (dry run)</Text>}
+          </TouchableOpacity>
+        )}
+        {preview && !result && (
+          <ScrollView style={{ maxHeight: 180 }}>
+            <Text style={{ fontWeight: "700", color: theme.text }}>Valid rows: {preview.valid_rows.length}</Text>
+            {preview.errors.map((e, i) => (
+              <Text key={i} style={{ color: theme.danger, fontSize: 12 }}>
+                Row {e.row}: {e.error}
+              </Text>
+            ))}
+          </ScrollView>
+        )}
+        {result && (
+          <ScrollView style={{ maxHeight: 180 }}>
+            <Text style={{ color: theme.success, fontWeight: "700" }}>
+              Imported tenants: {result.tenants_created}, stays: {result.stays_created}
             </Text>
-          ))}
-        </ScrollView>
-      )}
-      {result && (
-        <ScrollView style={{ maxHeight: 180 }}>
-          <Text style={{ color: theme.success, fontWeight: "700" }}>
-            Imported tenants: {result.tenants_created}, stays: {result.stays_created}
-          </Text>
-          {result.errors.map((e: any, i: number) => (
-            <Text key={i} style={{ color: theme.danger, fontSize: 12 }}>
-              {e.row ? `Row ${e.row}: ` : ""}
-              {e.error}
-            </Text>
-          ))}
-        </ScrollView>
-      )}
-      {preview && !result && (
-        <TouchableOpacity style={[styles.primaryBtn, { justifyContent: "center" }]} onPress={() => runDry("execute")}>
-          <Text style={styles.primaryBtnText}>Import valid rows</Text>
+            {result.errors.map((e: any, i: number) => (
+              <Text key={i} style={{ color: theme.danger, fontSize: 12 }}>
+                {e.row ? `Row ${e.row}: ` : ""}
+                {e.error}
+              </Text>
+            ))}
+          </ScrollView>
+        )}
+        {preview && !result && (
+          <TouchableOpacity style={[styles.primaryBtn, { justifyContent: "center" }]} onPress={() => runDry("execute")}>
+            <Text style={styles.primaryBtnText}>Import valid rows</Text>
+          </TouchableOpacity>
+        )}
+        <TouchableOpacity
+          style={[styles.cancelBtn, { marginTop: 4 }]}
+          onPress={() => {
+            setFile(null);
+            setPreview(null);
+            setResult(null);
+            onClose();
+          }}
+        >
+          <Text style={styles.cancelBtnText}>Close</Text>
         </TouchableOpacity>
-      )}
-      <TouchableOpacity
-        style={[styles.cancelBtn, { marginTop: 4 }]}
-        onPress={() => {
-          setFile(null);
-          setPreview(null);
-          setResult(null);
-          onClose();
-        }}
-      >
-        <Text style={styles.cancelBtnText}>Close</Text>
-      </TouchableOpacity>
+      </View>
     </Sheet>
   );
 }

@@ -1,5 +1,6 @@
 import { api } from "@/lib/api";
 import { SearchBar } from "@/components/SearchBar";
+import { Option, Select } from "@/components/ui";
 import { usePg } from "@/lib/pg";
 import { theme } from "@/lib/theme";
 import type { BedStatus } from "@/lib/types";
@@ -26,6 +27,8 @@ export default function Dashboard() {
   const router = useRouter();
   const { propertyId, property, properties, ready: pgReady } = usePg();
   const [grid, setGrid] = useState<GridResponse | null>(null);
+  const [selectedFloorId, setSelectedFloorId] = useState<string | null>(null);
+  const [selectedRoomNumber, setSelectedRoomNumber] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -58,6 +61,30 @@ export default function Dashboard() {
     ? grid.properties.filter((p) => (propertyId ? p.id === propertyId : true))
     : [];
 
+  const availableFloors: Option[] = [
+    { value: "__all__", label: "All floors" },
+    ...Array.from(
+      new Map(
+        propertiesToShow
+          .flatMap((p) => p.floors)
+          .map((f) => [f.name, { value: f.id, label: `${f.name} floor` }])
+      ).values()
+    ),
+  ];
+
+  const candidateRooms = propertiesToShow
+    .flatMap((p) => p.floors)
+    .filter((f) => (!selectedFloorId || selectedFloorId === "__all__" ? true : f.id === selectedFloorId))
+    .flatMap((f) => f.rooms);
+
+  const availableRooms: Option[] = [
+    { value: "__all__", label: "All rooms" },
+    ...Array.from(new Set(candidateRooms.map((r) => r.number))).map((num) => ({
+      value: num,
+      label: `Room ${num}`,
+    })),
+  ];
+
   const totals = computeTotals(propertiesToShow);
 
   return (
@@ -68,8 +95,8 @@ export default function Dashboard() {
     >
       <View style={styles.titleRow}>
         <View style={{ flex: 1 }}>
-          <Text style={styles.h1}>{property ? property.name : "All PGs"}</Text>
-          <Text style={styles.sub}>{property ? "Occupancy for this PG" : `Across ${propertiesToShow.length} PG${propertiesToShow.length === 1 ? "" : "s"}`}</Text>
+          <Text style={styles.h1}>{property ? property.name : "All Buildings"}</Text>
+          <Text style={styles.sub}>{property ? "Occupancy for this building" : `Across ${propertiesToShow.length} building${propertiesToShow.length === 1 ? "" : "s"}`}</Text>
         </View>
         <View style={styles.livePill}>
           <View style={styles.liveDot} />
@@ -100,11 +127,40 @@ export default function Dashboard() {
         <Stat label="Repair" value={String(totals.maintenance)} icon="construct-outline" tone="warn" />
       </View>
 
+      <View style={styles.filterCard}>
+        <Text style={styles.filterCardTitle}>Filter layout</Text>
+        <View style={{ flexDirection: "row", gap: 8 }}>
+          <View style={{ flex: 1 }}>
+            <Select
+              compact
+              value={selectedFloorId ?? "__all__"}
+              options={availableFloors}
+              onChange={(v) => {
+                setSelectedFloorId(v === "__all__" ? null : v);
+                setSelectedRoomNumber(null);
+              }}
+              title="Select Floor"
+              placeholder="All floors"
+            />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Select
+              compact
+              value={selectedRoomNumber ?? "__all__"}
+              options={availableRooms}
+              onChange={(v) => setSelectedRoomNumber(v === "__all__" ? null : v)}
+              title="Select Room"
+              placeholder="All rooms"
+            />
+          </View>
+        </View>
+      </View>
+
       {propertiesToShow.length === 0 && (
         <View style={styles.emptyCard}>
           <Ionicons name="business-outline" size={28} color={theme.textLight} />
-          <Text style={styles.emptyTitle}>No PG selected or created</Text>
-          <Text style={styles.emptySub}>Create a PG from Setup to start adding rooms and tenants.</Text>
+          <Text style={styles.emptyTitle}>No building selected or created</Text>
+          <Text style={styles.emptySub}>Add a building from Setup to start adding rooms and tenants.</Text>
           <Pressable style={styles.emptyBtn} onPress={() => router.push("/(tabs)/setup")}>
             <Text style={styles.emptyBtnText}>Go to Setup</Text>
           </Pressable>
@@ -132,32 +188,42 @@ export default function Dashboard() {
               <View style={[styles.progressFill, { width: `${propTotals.occupancy_pct}%` }]} />
             </View>
 
-            {prop.floors.map((floor) => (
-              <View key={floor.id} style={{ marginTop: 12 }}>
-                <Text style={styles.floorName}>{floor.name} floor</Text>
-                {floor.rooms.map((room) => (
-                  <View key={room.id} style={styles.roomRow}>
-                    <Text style={styles.roomNo}>{room.number}</Text>
-                    <View style={styles.bedRow}>
-                      {room.beds.map((bed) => {
-                        const c = bedColors[bed.status];
-                        return (
-                          <View key={bed.id} style={[styles.bed, { backgroundColor: c.bg }]}>
-                            <Text style={[styles.bedLabel, { color: c.fg }]}>{bed.label}</Text>
-                            {bed.tenant_name && (
-                              <Text style={[styles.tenantName, { color: c.fg }]} numberOfLines={1}>
-                                {bed.tenant_name.split(" ")[0]}
-                              </Text>
-                            )}
-                          </View>
-                        );
-                      })}
-                    </View>
+            {prop.floors
+              .filter((floor) => (!selectedFloorId || selectedFloorId === "__all__" ? true : floor.id === selectedFloorId))
+              .map((floor) => {
+                const roomsToShow = floor.rooms.filter((room) =>
+                  !selectedRoomNumber || selectedRoomNumber === "__all__" ? true : room.number === selectedRoomNumber
+                );
+                if (selectedRoomNumber && selectedRoomNumber !== "__all__" && roomsToShow.length === 0) {
+                  return null;
+                }
+                return (
+                  <View key={floor.id} style={{ marginTop: 12 }}>
+                    <Text style={styles.floorName}>{floor.name} floor</Text>
+                    {roomsToShow.map((room) => (
+                      <View key={room.id} style={styles.roomRow}>
+                        <Text style={styles.roomNo}>{room.number}</Text>
+                        <View style={styles.bedRow}>
+                          {room.beds.map((bed) => {
+                            const c = bedColors[bed.status];
+                            return (
+                              <View key={bed.id} style={[styles.bed, { backgroundColor: c.bg }]}>
+                                <Text style={[styles.bedLabel, { color: c.fg }]}>{bed.label}</Text>
+                                {bed.tenant_name && (
+                                  <Text style={[styles.tenantName, { color: c.fg }]} numberOfLines={1}>
+                                    {bed.tenant_name.split(" ")[0]}
+                                  </Text>
+                                )}
+                              </View>
+                            );
+                          })}
+                        </View>
+                      </View>
+                    ))}
+                    {roomsToShow.length === 0 && <Text style={styles.propSub}>No matching rooms</Text>}
                   </View>
-                ))}
-                {floor.rooms.length === 0 && <Text style={styles.propSub}>No rooms yet</Text>}
-              </View>
-            ))}
+                );
+              })}
           </View>
         );
       })}
@@ -270,7 +336,17 @@ const styles = StyleSheet.create({
   heroValue: { fontSize: 34, fontWeight: "800", color: "#fff", marginTop: 2 },
   heroSub: { fontSize: 12, color: "#dcf0ff", marginTop: 2 },
   heroIcon: { width: 56, height: 56, borderRadius: 18, backgroundColor: "#ffffff2e", alignItems: "center", justifyContent: "center" },
-  totalsRow: { flexDirection: "row", gap: 8, marginBottom: 16 },
+  totalsRow: { flexDirection: "row", gap: 8, marginBottom: 12 },
+  filterCard: {
+    backgroundColor: "#fff",
+    borderRadius: 16,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: theme.border,
+    marginBottom: 16,
+    gap: 8,
+  },
+  filterCardTitle: { fontSize: 11, fontWeight: "800", color: theme.textLight, textTransform: "uppercase", letterSpacing: 0.5 },
   statCard: { flex: 1, backgroundColor: "#fff", borderRadius: 16, borderWidth: 1, borderColor: theme.border, padding: 10, alignItems: "flex-start" },
   statIcon: { width: 28, height: 28, borderRadius: 9, alignItems: "center", justifyContent: "center", marginBottom: 8 },
   statValue: { fontSize: 18, fontWeight: "800", color: theme.text },

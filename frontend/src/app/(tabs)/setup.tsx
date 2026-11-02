@@ -157,12 +157,12 @@ export default function Setup() {
 
       <TouchableOpacity style={styles.cta} onPress={() => router.push("/create-pg")}>
         <Ionicons name="add-circle" size={20} color="#fff" />
-        <Text style={styles.ctaText}>Create a new PG</Text>
+        <Text style={styles.ctaText}>Add building</Text>
       </TouchableOpacity>
 
       {properties?.length === 0 && (
         <Text style={[styles.meta, { textAlign: "center", marginTop: 10 }]}>
-          No PGs yet — create your first one. Floors, rooms & beds are generated automatically.
+          No buildings yet — add your first building. Floors, rooms & beds are generated automatically.
         </Text>
       )}
 
@@ -177,9 +177,9 @@ export default function Setup() {
 
       <ConfirmDialog
         visible={!!deleteProp}
-        title="Delete PG"
-        message={`"${deleteProp?.name ?? ""}" and all its floors, rooms & beds will be deleted. PGs with active tenants can't be deleted — vacate their beds first.`}
-        confirmLabel="Delete PG"
+        title="Delete building"
+        message={`"${deleteProp?.name ?? ""}" and all its floors, rooms & beds will be deleted. Buildings with active tenants can't be deleted — vacate their beds first.`}
+        confirmLabel="Delete building"
         busy={busy}
         onCancel={() => setDeleteProp(null)}
         onConfirm={removeProperty}
@@ -246,8 +246,8 @@ function PropertyEditorModal({
   return (
     <Sheet visible onClose={onClose}>
       <ScrollView style={{ maxHeight: 560 }} contentContainerStyle={{ gap: 10 }}>
-        <Text style={styles.modalTitle}>Edit PG</Text>
-        <Text style={styles.fieldLabel}>PG name</Text>
+        <Text style={styles.modalTitle}>Edit building</Text>
+        <Text style={styles.fieldLabel}>Building name</Text>
         <TextInput style={styles.input} value={name} onChangeText={setName} />
         <Text style={styles.fieldLabel}>Address</Text>
         <TextInput style={styles.input} placeholder="Area, city" value={address} onChangeText={setAddress} />

@@ -144,13 +144,12 @@ def list_properties(auth: AuthContext = Depends(require_staff), db: Session = De
         .order_by(Property.created_at)
     ).all()
     return [
-        PropertyListOut.model_validate(prop).model_copy(
-            update={
-                "total_rooms": total_rooms,
-                "total_beds": total_beds,
-                "occupied_beds": occupied_beds,
-                "vacant_beds": vacant_beds,
-            }
+        PropertyListOut(
+            **PropertyOut.model_validate(prop).model_dump(),
+            total_rooms=total_rooms,
+            total_beds=total_beds,
+            occupied_beds=occupied_beds,
+            vacant_beds=vacant_beds,
         )
         for prop, total_rooms, total_beds, occupied_beds, vacant_beds in rows
     ]
@@ -191,15 +190,14 @@ def get_property_details(
         .limit(1)
     ).scalar_one_or_none()
     organization = db.get(Organization, prop.organization_id)
-    return PropertyDetailOut.model_validate(prop).model_copy(
-        update={
-            "owner_name": owner.name if owner else None,
-            "contact_phone": organization.contact_phone if organization else None,
-            "total_rooms": total_rooms,
-            "total_beds": total_beds,
-            "occupied_beds": occupied_beds,
-            "vacant_beds": vacant_beds,
-        }
+    return PropertyDetailOut(
+        **PropertyOut.model_validate(prop).model_dump(),
+        owner_name=owner.name if owner else None,
+        contact_phone=organization.contact_phone if organization else None,
+        total_rooms=total_rooms,
+        total_beds=total_beds,
+        occupied_beds=occupied_beds,
+        vacant_beds=vacant_beds,
     )
 
 

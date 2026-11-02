@@ -152,7 +152,7 @@ export default function PgDetails() {
       {property && (
         <>
           <View style={styles.card}>
-            <Text style={styles.sectionTitle}>Property</Text>
+            <Text style={styles.sectionTitle}>Building</Text>
             <Info label="Full address" value={property.address} />
             <Info label="Locality" value={property.locality} />
             <Info label="City" value={property.city} />

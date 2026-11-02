@@ -189,3 +189,73 @@ Tip: when running Expo locally, stop the compose frontend first to avoid the 808
 | Bed pill styling | Occupied/maintenance pills now include the base `bedPill` style (padding, radius, centered text, min-width) so they render square like vacant pills instead of stretching/narrowing. | ✅ |
 | Index screen removed | Deleted unused `src/app/(tabs)/index.tsx` (phantom/white tab). Root `index.tsx` retained for login/dashboard redirect. | ✅ |
 | Verification | `tsc --noEmit` clean; `expo export --platform web` clean; pytest 38/38 | ✅ |
+
+
+## Sprint 4 (branch `development`) — Building reframing, requests, notifications, guest mode
+
+Baseline: checked out `development` (new screens: chat, complaints, search, tenant-profile, inbox; backend: collaboration/receipts/search APIs, migrations up to 0006). Vanilla dev-branch suite had 4 failing tests — fixed while integrating (below).
+
+### Backend (pytest 48/48)
+
+| Item | Detail | Status |
+|---|---|---|
+| Migration `0007_notice_and_requests` | `stays.notice_start_date/notice_end_date`, new `change_requests` table (kind=change/booking, guest + optional tenant + hierarchical selection, status, decision), `in_app_notifications.request_id` FK. Applied to Postgres (head 0007) | ✅ |
+| Enums | `RequestKind` (change/booking), `RequestStatus` (open/approved/rejected) | ✅ |
+| Tenant self-service `app/api/my.py` | `POST /my/notice` (records notice start = today, end = body.end_date or today+prop.notice_period_days; 409 if already set; 422 past end; staff notified), `POST /my/notice/cancel`, `GET /my/transactions` (invoices+payments per invoice), expanded `MyProfile` (email, emergency contacts, id number, deposit, move-in, notice dates+period) | ✅ |
+| Tenant change requests `app/api/requests.py` | `POST/GET /my/change-requests` — anywhere → building → floor → room → bed selection with full hierarchy validation (`_validate_targets`); staff notified | ✅ |
+| Staff requests | `GET /requests?kind=&request_status=` (label-resolved rows incl. tenant/guest names, building/floor/room/bed), `PATCH /requests/{id}` decision → tenant notified via in-app notification | ✅ |
+| Staff notifications `app/api/notifications.py` | `GET /staff/notifications` (last 100), `PATCH /staff/notifications/{id}/read` | ✅ |
+| Trigger wiring | Complaint creation → staff notification (priority+title); record_payment → staff notification (tenant, amount, mode, room). `app/services/notify.py` = `notify_staff` (owner+manager members) / `notify_user` | ✅ |
+| Guest (public) `app/api/public.py` | `GET /public/pgs` (directory w/ buildings/beds/vacancy/rent range/city), `GET /public/pgs/{org_id}` (per-building floors/rooms/vacant beds for booking), `POST /public/booking-requests` (guest name+phone, anywhere→bed selection, hierarchy validated, staff notified) | ✅ |
+| New tests | `tests/test_requests_public.py`: notice start/409/cancel/422, change-request hierarchy 422 + create/list/decision 409 + tenant notification, public directory/detail (vacant A,B), guest booking → staff notification + mark-read | ✅ |
+| Dev-branch fixes | ① `PropertyListOut`/`PropertyDetailOut` built from bare `Property` then `model_copy` — pydantic required-field crash; now constructed via `PropertyOut.model_dump()` + stats. ② Search: tenant-name hits now also surface the matched tenant's PG (test-specified behavior; property stats joined on those ids). ③ `ComplaintStatusHistory.created_at` got a client-side `datetime.now(timezone.utc)` default — second-granularity `now()` SQLite ties made `[open, in_progress]` ordering flip randomly. ④ `/my/notifications` & mark-read were inner-joined to Complaints → request-related (and unlinked) tenant notifications were invisible; now outer-joined with org filter over complaint **or** request link | ✅ |
+
+### Frontend
+
+Not started (queued): LocationPicker cascade component, TopBar bell+signout, notifications screen, tenant app rewrite (profile/tenure/notice/transactions/change-request), guest mode screens, cascading filters + tenant search on staff lists, Building/PG wording pass.
+
+### Infra notes
+
+- Port conflict: another project (`home_automation`) held 8000/5433; user freed them; HMS stack recreated (data kept — named volume `hms_pgdata`), Compose network glitch fixed via `compose down`/`up`.
+
+
+### Frontend (Sprint 4) ✅ COMPLETE
+
+| Item | Detail | Status |
+|---|---|---|
+| `lib/public.ts` | PublicPgSummary, PublicPgDetail, PublicBuilding, PublicFloor, PublicRoom, PublicBed types + `fetchPublicPgs()`, `fetchPublicPg(orgId)` (no auth) | ✅ |
+| `lib/notifications.ts` | `useNotifications()` hook — role-aware: tenant → `/my/notifications`, staff → `/staff/notifications`; unread count, `markRead(id)` | ✅ |
+| `components/LocationPicker.tsx` | Cascading Building → Floor → Room → Bed with "Any" at each level; uses `PublicBuilding` hierarchy; helper `selectionLabel()` | ✅ |
+| `components/ui.tsx` TopBar | Bell icon with unread badge (via `useNotifications`), signout ConfirmDialog; tenant shows bell+signout, staff also PgSelector | ✅ |
+| `app/notifications.tsx` | Unified list screen: taps mark-read, shows request_id link to `/requests`, timestamps | ✅ |
+| `app/requests.tsx` | Staff requests page: kind (All/Change/Booking) + status (All/Open/Approved/Rejected) filters, approve/reject actions (PATCH) | ✅ |
+| `app/transactions.tsx` | Tenant transaction history: per-invoice paid/partial/pending, payment list with mode/date | ✅ |
+| `app/change-request.tsx` | Tenant move request form: LocationPicker + note → `POST /my/change-requests` | ✅ |
+| `app/tenant.tsx` rewrite | Profile card (name, phone, building/room/bed, rent, deposit, move-in, contact manager via Linking); notice period card with Start/Cancel; tiles for Transactions, Change Request, Complaints, Chat; dues snapshot | ✅ |
+| `app/guest.tsx` + `app/guest/[orgId].tsx` | Guest directory (search by name/city, vacant counts, rent range), detail with building/floor/room/bed accordion, "Request a bed" Sheet (name/phone/LocationPicker/note) → `POST /public/booking-requests`; call manager link | ✅ |
+| `login.tsx` | "Browse PGs as a guest" link → `/guest` | ✅ |
+| `app/(tabs)/tenants.tsx` | Added client-side search input (name/phone/room) + building filter via PgSelector (already) | ✅ |
+| Wording pass | setup: "Create a new PG" → "Add building", "Delete PG" → "Delete building", "Edit PG" → "Edit building"; create-pg: "PG name" → "Building name", "PG-level" → "Building-level"; pg/[id]: "Property" → "Building"; complaints: "property manager" → "PG manager" | ✅ |
+
+### Tests / Verification
+
+| Check | Result |
+|---|---|
+| Backend pytest | **48/48 passing** (incl. tests in `test_requests_public.py`) |
+| Live Postgres (alembic head 0007) | ✅ Migration applied, live containers running |
+| Frontend route registration | All new screens registered in `app/_layout.tsx` (Stack + tabs) |
+| TypeScript check (`tsc --noEmit`) | ✅ **Clean (0 errors)** — typed routes generated & imports aligned |
+| Expo web export (`expo export --platform web`) | ✅ **Clean build successful** (Metro bundle, 825 modules, assets, HTML generated) |
+
+### Commands for full verification
+
+```bash
+# Backend
+cd /mnt/e/BackUp/HMS/backend
+/mnt/e/BackUp/HMS/.venv/bin/python -m pytest tests -q
+
+# Frontend (after manual `npx expo export` to refresh typed routes)
+cd /mnt/e/BackUp/HMS/frontend
+npx tsc --noEmit
+CI=1 npx expo export --platform web --output-dir .export-test && rm -rf .export-test
+```

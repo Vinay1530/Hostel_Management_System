@@ -57,7 +57,7 @@ export default function PropertyEditor() {
       }>("/occupancy-grid");
       const p = g.properties.find((x) => x.id === id);
       if (!p) {
-        setError("Property not found");
+        setError("Building not found");
         setGrid(null);
         return;
       }
