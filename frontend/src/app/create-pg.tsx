@@ -1,7 +1,8 @@
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { usePg } from "@/lib/pg";
-import { FACILITY_OPTIONS, parseFacilities, theme } from "@/lib/theme";
+import { FACILITY_OPTIONS, parseFacilities } from "@/lib/theme";
+import { design } from "@/lib/design";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useEffect, useRef, useState } from "react";
@@ -94,7 +95,7 @@ export default function CreatePG() {
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <View style={styles.headerRow}>
         <Pressable onPress={() => router.back()} style={styles.backBtn}>
-          <Ionicons name="chevron-back" size={22} color={theme.text} />
+          <Ionicons name="chevron-back" size={22} color={design.colors.textPrimary} />
         </Pressable>
         <Text style={styles.h1}>Add building</Text>
       </View>
@@ -188,7 +189,7 @@ export default function CreatePG() {
 function FacilityChip({ icon, label, selected, onPress }: { icon: string; label: string; selected: boolean; onPress: () => void }) {
   return (
     <TouchableOpacity onPress={onPress} style={[styles.chip, selected && styles.chipOn]}>
-      <Ionicons name={icon as any} size={15} color={selected ? theme.accentText : theme.textLight} />
+      <Ionicons name={icon as any} size={15} color={selected ? design.colors.primaryDark : design.colors.textSecondary} />
       <Text style={[styles.chipText, selected && styles.chipTextOn]}>{label}</Text>
     </TouchableOpacity>
   );
@@ -209,33 +210,33 @@ function clamp(v: string, lo: number, hi: number): number {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: theme.bg },
+  container: { flex: 1, backgroundColor: design.colors.background },
   content: { padding: 16, paddingBottom: 60 },
   headerRow: { flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 14 },
-  backBtn: { backgroundColor: theme.card, borderRadius: 999, padding: 6, borderWidth: 1, borderColor: theme.border },
-  h1: { fontSize: 26, fontWeight: "800", color: theme.text, letterSpacing: -0.3 },
+  backBtn: { backgroundColor: design.colors.surface, borderRadius: 999, padding: 6, borderWidth: 1, borderColor: design.colors.border },
+  h1: { fontSize: 26, fontWeight: "800", color: design.colors.textPrimary, letterSpacing: -0.3 },
   dotsRow: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 14 },
-  dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: theme.border },
-  dotOn: { backgroundColor: theme.accent, width: 22 },
-  stepLabel: { fontSize: 12, color: theme.textLight, marginLeft: 6 },
-  card: { backgroundColor: theme.card, borderRadius: 20, padding: 16, borderWidth: 1, borderColor: theme.border, gap: 4 },
-  label: { fontSize: 12, fontWeight: "700", color: theme.textLight, marginTop: 8 },
-  input: { borderWidth: 1, borderColor: theme.chipBorder, borderRadius: 12, padding: 12, fontSize: 15, backgroundColor: "#fff", color: theme.text },
+  dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: design.colors.border },
+  dotOn: { backgroundColor: design.colors.primary, width: 22 },
+  stepLabel: { fontSize: 12, color: design.colors.textSecondary, marginLeft: 6 },
+  card: { backgroundColor: design.colors.surface, borderRadius: 20, padding: 16, borderWidth: 1, borderColor: design.colors.border, gap: 4 },
+  label: { fontSize: 12, fontWeight: "700", color: design.colors.textSecondary, marginTop: 8 },
+  input: { borderWidth: 1, borderColor: design.colors.border, borderRadius: 12, padding: 12, fontSize: 15, backgroundColor: "#fff", color: design.colors.textPrimary },
   chipsRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 8 },
-  chip: { flexDirection: "row", alignItems: "center", gap: 5, borderRadius: 20, borderWidth: 1, borderColor: theme.chipBorder, backgroundColor: theme.chipBg, paddingVertical: 6, paddingHorizontal: 12 },
-  chipOn: { backgroundColor: theme.accentSoft, borderColor: theme.accent },
-  chipText: { fontSize: 12, fontWeight: "600", color: theme.textLight },
-  chipTextOn: { color: theme.accentText },
+  chip: { flexDirection: "row", alignItems: "center", gap: 5, borderRadius: 20, borderWidth: 1, borderColor: design.colors.border, backgroundColor: design.colors.surfaceVariant, paddingVertical: 6, paddingHorizontal: 12 },
+  chipOn: { backgroundColor: design.colors.primaryLight, borderColor: design.colors.primary },
+  chipText: { fontSize: 12, fontWeight: "600", color: design.colors.textSecondary },
+  chipTextOn: { color: design.colors.primaryDark },
   numRow: { flexDirection: "row", gap: 10, marginTop: 8 },
-  previewRow: { flexDirection: "row", justifyContent: "space-between", backgroundColor: theme.accentSoft, borderRadius: 10, padding: 10 },
-  previewFloor: { fontSize: 13, fontWeight: "700", color: theme.accentText },
-  previewRooms: { fontSize: 13, color: theme.text, fontVariant: ["tabular-nums"] as any },
-  previewMore: { fontSize: 12, color: theme.textLight, paddingLeft: 4 },
-  note: { fontSize: 12, color: theme.textLight, marginTop: 10, lineHeight: 18 },
-  noteText: { fontSize: 11, color: theme.textLight, marginTop: 8, lineHeight: 16 },
-  cta: { backgroundColor: theme.accent, borderRadius: 999, padding: 16, alignItems: "center", justifyContent: "center", marginTop: 14 },
+  previewRow: { flexDirection: "row", justifyContent: "space-between", backgroundColor: design.colors.primaryLight, borderRadius: 10, padding: 10 },
+  previewFloor: { fontSize: 13, fontWeight: "700", color: design.colors.primaryDark },
+  previewRooms: { fontSize: 13, color: design.colors.textPrimary, fontVariant: ["tabular-nums"] as any },
+  previewMore: { fontSize: 12, color: design.colors.textSecondary, paddingLeft: 4 },
+  note: { fontSize: 12, color: design.colors.textSecondary, marginTop: 10, lineHeight: 18 },
+  noteText: { fontSize: 11, color: design.colors.textSecondary, marginTop: 8, lineHeight: 16 },
+  cta: { backgroundColor: design.colors.primary, borderRadius: 999, padding: 16, alignItems: "center", justifyContent: "center", marginTop: 14 },
   ctaDisabled: { opacity: 0.4 },
   ctaText: { color: "#fff", fontWeight: "800", fontSize: 15 },
   backLink: { alignItems: "center", marginTop: 12, padding: 8 },
-  backLinkText: { color: theme.accentText, fontWeight: "700" },
+  backLinkText: { color: design.colors.primaryDark, fontWeight: "700" },
 });

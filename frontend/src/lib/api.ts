@@ -15,6 +15,14 @@ import {
  */
 function resolveApiUrl(): string {
   if (process.env.EXPO_PUBLIC_API_URL) return process.env.EXPO_PUBLIC_API_URL;
+  // On web, talk to the same host the browser is already on: avoids stale
+  // hardcoded IPs and firewall/loopback issues in dev.
+  if (Platform.OS === "web" && typeof window !== "undefined" && window.location?.hostname) {
+    return `${window.location.protocol}//${window.location.hostname}:8000`;
+  }
+  // explicit api URL from app.json extra (for native devices, e.g. "http://192.168.1.5:8000")
+  const extraApiUrl = (Constants as any).expoConfig?.extra?.apiUrl;
+  if (extraApiUrl) return String(extraApiUrl);
   const hostUri: string | undefined =
     (Constants as any).expoConfig?.hostUri ?? (Constants as any).manifest?.debuggerHost;
   if (hostUri) {

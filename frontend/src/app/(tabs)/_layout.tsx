@@ -1,42 +1,31 @@
-import { TopBar } from "@/components/ui";
-import { theme } from "@/lib/theme";
-import { Ionicons } from "@expo/vector-icons";
 import { Tabs } from "expo-router";
-import { View } from "react-native";
-
-function TabsHeader() {
-  return (
-    <View style={{ backgroundColor: theme.bg }}>
-      <TopBar />
-    </View>
-  );
-}
+import { Ionicons } from "@expo/vector-icons";
+import { design } from "@/lib/design";
 
 export default function TabLayout() {
   return (
     <Tabs
       screenOptions={{
-        headerShown: true,
-        header: () => <TabsHeader />,
-        sceneStyle: { backgroundColor: theme.bg },
-        tabBarActiveTintColor: theme.accent,
-        tabBarInactiveTintColor: theme.textLight,
+        headerShown: false,
+        tabBarActiveTintColor: design.colors.primary,
+        tabBarInactiveTintColor: design.colors.textMuted,
         tabBarLabelStyle: { fontSize: 11, fontWeight: "700" },
         tabBarStyle: {
           backgroundColor: "#ffffff",
-          borderTopColor: theme.border,
-          height: 64,
+          borderTopWidth: 1,
+          borderTopColor: design.colors.border,
+          height: 72,
           paddingTop: 6,
-          paddingBottom: 8,
-        },
+          paddingBottom: 4,
+        } as any,
       }}
     >
       <Tabs.Screen
         name="dashboard"
         options={{
-          title: "Beds",
-          tabBarIcon: ({ color, size }: { color: string; size: number }) => (
-            <Ionicons name="grid-outline" color={color} size={size} />
+          title: "Dashboard",
+          tabBarIcon: ({ focused }: { focused: boolean }) => (
+            <Ionicons name={focused ? "home" : "home-outline"} size={26} color={focused ? design.colors.primary : design.colors.textMuted} />
           ),
         }}
       />
@@ -44,8 +33,8 @@ export default function TabLayout() {
         name="tenants"
         options={{
           title: "Tenants",
-          tabBarIcon: ({ color, size }: { color: string; size: number }) => (
-            <Ionicons name="people-outline" color={color} size={size} />
+          tabBarIcon: ({ focused }: { focused: boolean }) => (
+            <Ionicons name={focused ? "people" : "people-outline"} size={26} color={focused ? design.colors.primary : design.colors.textMuted} />
           ),
         }}
       />
@@ -53,17 +42,8 @@ export default function TabLayout() {
         name="dues"
         options={{
           title: "Dues",
-          tabBarIcon: ({ color, size }: { color: string; size: number }) => (
-            <Ionicons name="wallet-outline" color={color} size={size} />
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="inbox"
-        options={{
-          title: "Inbox",
-          tabBarIcon: ({ color, size }: { color: string; size: number }) => (
-            <Ionicons name="chatbubbles-outline" color={color} size={size} />
+          tabBarIcon: ({ focused }: { focused: boolean }) => (
+            <Ionicons name={focused ? "cash" : "cash-outline"} size={26} color={focused ? design.colors.primary : design.colors.textMuted} />
           ),
         }}
       />
@@ -71,8 +51,21 @@ export default function TabLayout() {
         name="setup"
         options={{
           title: "Setup",
-          tabBarIcon: ({ color, size }: { color: string; size: number }) => (
-            <Ionicons name="settings-outline" color={color} size={size} />
+          tabBarIcon: ({ focused }: { focused: boolean }) => (
+            <Ionicons name={focused ? "settings" : "settings-outline"} size={26} color={focused ? design.colors.primary : design.colors.textMuted} />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="inbox"
+        options={{ href: null }}
+      />
+      <Tabs.Screen
+        name="profile"
+        options={{
+          title: "Profile",
+          tabBarIcon: ({ focused }: { focused: boolean }) => (
+            <Ionicons name={focused ? "person" : "person-outline"} size={26} color={focused ? design.colors.primary : design.colors.textMuted} />
           ),
         }}
       />

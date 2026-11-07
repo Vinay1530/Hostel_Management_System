@@ -1,64 +1,91 @@
-import { ConfirmDialog, Sheet } from "@/components/ui";
-import { SearchBar } from "@/components/SearchBar";
 import { api } from "@/lib/api";
-import { usePg, Pg } from "@/lib/pg";
-import { FACILITY_OPTIONS, facilityIcon, facilityLabel, theme } from "@/lib/theme";
+import { usePg } from "@/lib/pg";
+import { design, getShadow } from "@/lib/design";
+import { Sheet } from "@/components/ui";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useRouter } from "expo-router";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import {
-  ActivityIndicator,
-  Alert,
   RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
+import {
+  AppButton,
+  AppText,
+  AppBadge,
+  EmptyState,
+  AppInput,
+  Skeleton,
+} from "@/components/ui-components";
 
-type Property = Pg & {
-  advance_or_arrears: "advance" | "arrears";
-  due_day: number;
-  pro_rate_first_month: boolean;
-  notice_period_days: number;
-  facilities: string | null;
-  city?: string | null;
-  locality?: string | null;
-  gate_timing?: string | null;
-  food_rules?: string | null;
-  visitor_rules?: string | null;
-  total_beds?: number;
-  occupied_beds?: number;
+type Bed = {
+  id: string;
+  label: string;
+  status: "vacant" | "occupied" | "maintenance";
+  tenant_name?: string | null;
+};
+type Room = { id: string; number: string; sharing_type: number; facilities: string | null; beds: Bed[] };
+type Floor = { id: string; name: string; rooms: Room[] };
+type Property = {
+  id: string;
+  name: string;
+  address: string | null;
+  city: string | null;
+  locality: string | null;
+  floors: Floor[];
 };
 
-function facilityChips(text: string | null) {
-  return (text ?? "")
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
+function bedColor(status: Bed["status"]): string {
+  if (status === "occupied") return design.colors.primary;
+  if (status === "maintenance") return design.colors.danger;
+  return design.colors.success;
+}
+
+function buildingTotals(property: Property) {
+  let beds = 0;
+  let occupied = 0;
+  let rooms = 0;
+  let floors = property.floors?.length ?? 0;
+  for (const floor of property.floors ?? []) {
+    rooms += floor.rooms?.length ?? 0;
+    for (const room of floor.rooms ?? [])
+      for (const bed of room.beds ?? []) {
+        beds += 1;
+        if (bed.status === "occupied") occupied += 1;
+      }
+  }
+  return { beds, occupied, rooms, floors, pct: beds ? Math.round((occupied / beds) * 100) : 0 };
 }
 
 export default function Setup() {
+  const { properties: pgProperties, refreshProperties } = usePg();
   const router = useRouter();
-  const { refreshProperties } = usePg();
-  const [properties, setProperties] = useState<Property[] | null>(null);
+
+  const [grid, setGrid] = useState<Property[] | null>(null);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [editProp, setEditProp] = useState<Property | null>(null);
-  const [deleteProp, setDeleteProp] = useState<Property | null>(null);
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [addOpen, setAddOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [form, setForm] = useState({ name: "", address: "", city: "", locality: "" });
+  const [formError, setFormError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
+    setError(null);
     try {
-      setError(null);
-      const props = await api.get<Property[]>("/properties");
-      setProperties(props);
-      await refreshProperties();
+      setLoading(true);
+      const res = await api.get<{ properties: Property[] }>("/occupancy-grid");
+      setGrid(res.properties ?? []);
     } catch (e: any) {
-      setError(e?.message ?? "Failed to load properties");
+      setError(e?.message ?? "Failed to load property layout");
+    } finally {
+      setLoading(false);
     }
-  }, [refreshProperties]);
+  }, []);
 
   useFocusEffect(
     useCallback(() => {
@@ -66,271 +93,520 @@ export default function Setup() {
     }, [load])
   );
 
-  async function toggleBilling(p: Property) {
-    const next = p.advance_or_arrears === "advance" ? "arrears" : "advance";
-    setBusy(true);
-    try {
-      await api.patch(`/properties/${p.id}`, { advance_or_arrears: next });
-      await load();
-    } catch (e: any) {
-      Alert.alert("Error", e?.message ?? "Failed");
-    } finally {
-      setBusy(false);
-    }
-  }
+  const buildings = grid ?? pgProperties.map((p) => ({
+    id: p.id,
+    name: p.name,
+    address: p.address ?? null,
+    city: null,
+    locality: null,
+    floors: [],
+  }));
 
-  async function removeProperty() {
-    if (!deleteProp) return;
-    setBusy(true);
+  const totals = buildings.reduce(
+    (acc, b) => {
+      const t = buildingTotals(b as Property);
+      return {
+        buildings: acc.buildings + 1,
+        rooms: acc.rooms + t.rooms,
+        beds: acc.beds + t.beds,
+        occupied: acc.occupied + t.occupied,
+      };
+    },
+    { buildings: 0, rooms: 0, beds: 0, occupied: 0 }
+  );
+  const occupancyPct = totals.beds ? Math.round((totals.occupied / totals.beds) * 100) : 0;
+
+  async function addBuilding() {
+    setFormError(null);
+    if (!form.name.trim()) {
+      setFormError("Building name is required.");
+      return;
+    }
+    setSaving(true);
     try {
-      await api.delete(`/properties/${deleteProp.id}`);
-      setDeleteProp(null);
-      await load();
+      await api.post("/properties", {
+        name: form.name.trim(),
+        address: form.address.trim() || undefined,
+        city: form.city.trim() || undefined,
+        locality: form.locality.trim() || undefined,
+      });
+      setAddOpen(false);
+      setForm({ name: "", address: "", city: "", locality: "" });
+      await Promise.allSettled([load(), refreshProperties()]);
     } catch (e: any) {
-      Alert.alert("Can't delete", e?.message ?? "Failed");
+      setFormError(e?.detail ?? e?.message ?? "Failed to add building");
     } finally {
-      setBusy(false);
+      setSaving(false);
     }
   }
 
   return (
-    <ScrollView
-      style={styles.container}
-      contentContainerStyle={styles.content}
-      refreshControl={<RefreshControl refreshing={!!properties && busy} onRefresh={load} tintColor={theme.accent} />}
-    >
-      <Text style={styles.h1}>Your PGs</Text>
-      <Text style={styles.sub}>Manage buildings, rooms, beds and billing</Text>
-      <SearchBar editable={false} onPress={() => router.push("/search")} />
-      {error && <Text style={styles.error}>{error}</Text>}
-
-      {properties?.map((p) => (
-        <View key={p.id} style={styles.card}>
-          <TouchableOpacity style={styles.propHead} onPress={() => router.push({ pathname: "/pg/[id]", params: { id: p.id } })}>
-            <View style={styles.propIcon}>
-              <Ionicons name="business" size={18} color={theme.accentText} />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.propName}>{p.name}</Text>
-              <Text style={styles.meta}>
-                {[p.locality, p.city].filter(Boolean).join(", ") || p.address || "Location not set"}
-                {typeof p.total_beds === "number" ? ` · ${p.occupied_beds ?? 0}/${p.total_beds} beds` : ""}
-              </Text>
-            </View>
-            <Ionicons name="chevron-forward" size={18} color={theme.textLight} />
+    <View style={styles.container}>
+      {/* Header */}
+      <View style={styles.hero}>
+        <View style={styles.heroGlow} />
+        <View style={styles.heroTop}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.eyebrow}>PROPERTY SETUP</Text>
+            <AppText variant="h2" color="#fff">
+              Layout & Rooms
+            </AppText>
+            <AppText variant="caption" color="rgba(255,255,255,0.72)">
+              Building → floor → room → bed
+            </AppText>
+          </View>
+          <TouchableOpacity style={styles.heroIconBtn} onPress={() => setAddOpen(true)}>
+            <Ionicons name="add" size={24} color="#fff" />
           </TouchableOpacity>
-
-          <View style={styles.actionRow}>
-            <TouchableOpacity style={styles.actionBtn} onPress={() => setEditProp(p)}>
-              <Ionicons name="create-outline" size={14} color={theme.accentText} />
-              <Text style={styles.actionBtnText}>Edit</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={[styles.actionBtn, styles.actionDanger]} onPress={() => setDeleteProp(p)}>
-              <Ionicons name="trash-outline" size={14} color={theme.danger} />
-              <Text style={[styles.actionBtnText, { color: theme.danger }]}>Delete</Text>
-            </TouchableOpacity>
-            <View style={{ flex: 1 }} />
-            <TouchableOpacity style={styles.modeBtn} disabled={busy} onPress={() => toggleBilling(p)}>
-              <Ionicons name={p.advance_or_arrears === "advance" ? "arrow-up-circle" : "arrow-down-circle"} size={14} color={theme.accentText} />
-              <Text style={styles.modeBtnText}>{p.advance_or_arrears === "advance" ? "ADVANCE" : "ARREARS"}</Text>
-            </TouchableOpacity>
-          </View>
-
-          <View style={styles.divider} />
-
-          <Text style={styles.section}>Facilities</Text>
-          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
-            {facilityChips(p.facilities).length === 0 && <Text style={styles.meta}>None set yet</Text>}
-            {facilityChips(p.facilities).map((f) => (
-              <View key={f} style={styles.fChip}>
-                <Ionicons name={facilityIcon(f) as any} size={13} color={theme.accentText} />
-                <Text style={styles.fChipText}>{facilityLabel(f)}</Text>
-              </View>
-            ))}
-          </View>
-
-          <Text style={[styles.meta, { marginTop: 10 }]}>
-            Due day {p.due_day} · pro-rate {p.pro_rate_first_month ? "on" : "off"} · notice {p.notice_period_days}d
-          </Text>
         </View>
-      ))}
+      </View>
 
-      <TouchableOpacity style={styles.cta} onPress={() => router.push("/create-pg")}>
-        <Ionicons name="add-circle" size={20} color="#fff" />
-        <Text style={styles.ctaText}>Add building</Text>
-      </TouchableOpacity>
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={styles.content}
+        refreshControl={
+          <RefreshControl refreshing={loading} onRefresh={load} tintColor={design.colors.primary} />
+        }
+      >
+        {loading && !grid && (
+          <View style={{ gap: 12 }}>
+            <View style={styles.statsRow}>
+              <Skeleton height={82} radius={16} style={{ flex: 1 }} />
+              <Skeleton height={82} radius={16} style={{ flex: 1 }} />
+              <Skeleton height={82} radius={16} style={{ flex: 1 }} />
+            </View>
+            <Skeleton height={110} radius={16} />
+            <Skeleton height={110} radius={16} />
+          </View>
+        )}
 
-      {properties?.length === 0 && (
-        <Text style={[styles.meta, { textAlign: "center", marginTop: 10 }]}>
-          No buildings yet — add your first building. Floors, rooms & beds are generated automatically.
-        </Text>
-      )}
+        {!loading || grid ? (
+          <>
+            {/* Summary */}
+            <View style={styles.statsRow}>
+              <SummaryTile label="Buildings" value={totals.buildings} icon="business" />
+              <SummaryTile label="Rooms" value={totals.rooms} icon="grid" />
+              <SummaryTile
+                label="Occupancy"
+                value={`${occupancyPct}%`}
+                icon="pie-chart"
+                tint={design.colors.primary}
+              />
+            </View>
 
-      <PropertyEditorModal
-        property={editProp}
-        onClose={() => setEditProp(null)}
-        onSaved={async () => {
-          setEditProp(null);
-          await load();
-        }}
-      />
+            <View style={styles.sectionRow}>
+              <AppText variant="label" color={design.colors.textSecondary} style={styles.sectionLabel}>
+                YOUR BUILDINGS
+              </AppText>
+              <View style={styles.legendRow}>
+                <LegendDot color={design.colors.success} label="Free" />
+                <LegendDot color={design.colors.primary} label="Occupied" />
+                <LegendDot color={design.colors.danger} label="Fix" />
+              </View>
+            </View>
 
-      <ConfirmDialog
-        visible={!!deleteProp}
-        title="Delete building"
-        message={`"${deleteProp?.name ?? ""}" and all its floors, rooms & beds will be deleted. Buildings with active tenants can't be deleted — vacate their beds first.`}
-        confirmLabel="Delete building"
-        busy={busy}
-        onCancel={() => setDeleteProp(null)}
-        onConfirm={removeProperty}
-      />
-    </ScrollView>
+            {buildings.length === 0 && !loading && (
+              <EmptyState
+                icon="business-outline"
+                title="No buildings yet"
+                subtitle="Create your first building, then add floors, rooms and beds."
+                actionLabel="Add Building"
+                onAction={() => setAddOpen(true)}
+              />
+            )}
+
+            <View style={{ gap: 10 }}>
+              {buildings.map((building) => {
+                const t = buildingTotals(building as Property);
+                const isOpen = expanded[building.id] ?? true;
+                const address = [building.locality, building.city].filter(Boolean).join(", ");
+                return (
+                  <View key={building.id} style={styles.buildingCard}>
+                    <TouchableOpacity
+                      style={styles.buildingHeader}
+                      activeOpacity={0.85}
+                      onPress={() =>
+                        setExpanded((prev) => ({ ...prev, [building.id]: !isOpen }))
+                      }
+                    >
+                      <View style={styles.buildingIcon}>
+                        <Ionicons name="business" size={19} color={design.colors.primary} />
+                      </View>
+                      <View style={{ flex: 1, minWidth: 0 }}>
+                        <View style={styles.buildingNameRow}>
+                          <AppText
+                            variant="h4"
+                            color={design.colors.textPrimary}
+                            numberOfLines={1}
+                            style={{ flex: 1 }}
+                          >
+                            {building.name}
+                          </AppText>
+                          <AppBadge variant={t.beds > 0 && t.occupied >= t.beds ? "success" : "primary"}>
+                            {t.occupied}/{t.beds} beds
+                          </AppBadge>
+                        </View>
+                        <AppText variant="caption" color={design.colors.textSecondary} numberOfLines={1}>
+                          {address || "Address not added"} · {t.floors} floors · {t.rooms} rooms
+                        </AppText>
+                      </View>
+                      <Ionicons
+                        name={isOpen ? "chevron-up" : "chevron-down"}
+                        size={18}
+                        color={design.colors.textMuted}
+                      />
+                    </TouchableOpacity>
+
+                    <View style={styles.occupancyTrack}>
+                      <View style={[styles.occupancyFill, { width: `${t.pct}%` }]} />
+                    </View>
+
+                    {isOpen && (
+                      <View style={styles.buildingBody}>
+                        {t.floors === 0 && (
+                          <View style={styles.emptyFloor}>
+                            <AppText variant="caption" color={design.colors.textMuted}>
+                              No floors yet — open the editor to add floors, rooms and beds.
+                            </AppText>
+                          </View>
+                        )}
+
+                        {building.floors?.map((floor) => {
+                          const floorRooms = floor.rooms ?? [];
+                          const floorBeds = floorRooms.reduce((n, r) => n + (r.beds?.length ?? 0), 0);
+                          const floorOccupied = floorRooms.reduce(
+                            (n, r) => n + (r.beds ?? []).filter((b) => b.status === "occupied").length,
+                            0
+                          );
+                          return (
+                            <View key={floor.id} style={styles.floorBlock}>
+                              <View style={styles.floorRow}>
+                                <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                                  <View style={styles.floorDot} />
+                                  <AppText variant="label" color={design.colors.textSecondary} style={styles.floorLabel}>
+                                    {String(floor.name).toUpperCase()}
+                                  </AppText>
+                                </View>
+                                <AppText variant="caption" color={design.colors.textMuted}>
+                                  {floorOccupied}/{floorBeds} occupied
+                                </AppText>
+                              </View>
+
+                              <ScrollView
+                                horizontal
+                                showsHorizontalScrollIndicator={false}
+                                contentContainerStyle={styles.roomRow}
+                              >
+                                {floorRooms.map((room) => {
+                                  const beds = room.beds ?? [];
+                                  return (
+                                    <TouchableOpacity
+                                      key={room.id}
+                                      style={styles.roomTile}
+                                      activeOpacity={0.88}
+                                      onPress={() => router.push(`/property/${building.id}`)}
+                                    >
+                                      <View style={styles.roomTileTop}>
+                                        <AppText variant="body" color={design.colors.textPrimary} style={{ fontWeight: "800" }}>
+                                          {room.number}
+                                        </AppText>
+                                        <AppText variant="caption" color={design.colors.textMuted}>
+                                          {beds.length}-bed
+                                        </AppText>
+                                      </View>
+                                      <View style={styles.bedDots}>
+                                        {beds.map((bed) => (
+                                          <View
+                                            key={bed.id}
+                                            style={[styles.bedDot, { backgroundColor: bedColor(bed.status) }]}
+                                          />
+                                        ))}
+                                        {beds.length === 0 && (
+                                          <AppText variant="caption" color={design.colors.textMuted}>
+                                            no beds
+                                          </AppText>
+                                        )}
+                                      </View>
+                                    </TouchableOpacity>
+                                  );
+                                })}
+                                {floorRooms.length === 0 && (
+                                  <AppText variant="caption" color={design.colors.textMuted}>
+                                    No rooms — tap Edit layout to add one.
+                                  </AppText>
+                                )}
+                              </ScrollView>
+                            </View>
+                          );
+                        })}
+
+                        <TouchableOpacity
+                          style={styles.editLayoutBtn}
+                          onPress={() => router.push(`/property/${building.id}`)}
+                          activeOpacity={0.9}
+                        >
+                          <Ionicons name="construct-outline" size={15} color={design.colors.primary} />
+                          <AppText variant="caption" color={design.colors.primary} style={{ fontWeight: "800" }}>
+                            Edit layout, floors & beds
+                          </AppText>
+                          <Ionicons name="arrow-forward" size={13} color={design.colors.primary} />
+                        </TouchableOpacity>
+                      </View>
+                    )}
+                  </View>
+                );
+              })}
+            </View>
+
+            {buildings.length > 0 && (
+              <TouchableOpacity style={styles.addBuildingCta} onPress={() => setAddOpen(true)}>
+                <Ionicons name="add-circle-outline" size={19} color={design.colors.primary} />
+                <AppText variant="body" color={design.colors.primary} style={{ fontWeight: "800" }}>
+                  Add another building
+                </AppText>
+              </TouchableOpacity>
+            )}
+          </>
+        ) : null}
+
+        {error && <Text style={styles.error}>{error}</Text>}
+      </ScrollView>
+
+      <Sheet visible={addOpen} onClose={() => setAddOpen(false)}>
+        <AppText variant="h3" color={design.colors.textPrimary}>
+          Add Building
+        </AppText>
+        <AppText variant="caption" color={design.colors.textSecondary} style={{ marginBottom: 10 }}>
+          You can add floors, rooms and beds right after.
+        </AppText>
+        <AppInput
+          label="Building name"
+          placeholder="e.g. Sunrise PG — Block A"
+          value={form.name}
+          onChangeText={(v) => setForm({ ...form, name: v })}
+        />
+        <AppInput
+          label="Address"
+          placeholder="Street address"
+          value={form.address}
+          onChangeText={(v) => setForm({ ...form, address: v })}
+        />
+        <View style={{ flexDirection: "row", gap: 10 }}>
+          <View style={{ flex: 1 }}>
+            <AppInput
+              label="Locality"
+              placeholder="e.g. Koramangala"
+              value={form.locality}
+              onChangeText={(v) => setForm({ ...form, locality: v })}
+            />
+          </View>
+          <View style={{ flex: 1 }}>
+            <AppInput
+              label="City"
+              placeholder="e.g. Bengaluru"
+              value={form.city}
+              onChangeText={(v) => setForm({ ...form, city: v })}
+            />
+          </View>
+        </View>
+        {formError && <Text style={styles.formError}>{formError}</Text>}
+        <AppButton variant="primary" fullWidth loading={saving} onPress={addBuilding} style={{ marginTop: 8 }}>
+          Create Building
+        </AppButton>
+      </Sheet>
+    </View>
   );
 }
 
-function PropertyEditorModal({
-  property,
-  onClose,
-  onSaved,
+function SummaryTile({
+  label,
+  value,
+  icon,
+  tint,
 }: {
-  property: Property | null;
-  onClose: () => void;
-  onSaved: () => void;
+  label: string;
+  value: string | number;
+  icon: string;
+  tint?: string;
 }) {
-  const [name, setName] = useState("");
-  const [address, setAddress] = useState("");
-  const [city, setCity] = useState("");
-  const [locality, setLocality] = useState("");
-  const [gateTiming, setGateTiming] = useState("");
-  const [foodRules, setFoodRules] = useState("");
-  const [visitorRules, setVisitorRules] = useState("");
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [busy, setBusy] = useState(false);
-
-  useEffect(() => {
-    if (property) {
-      setName(property.name);
-      setAddress(property.address ?? "");
-      setCity(property.city ?? "");
-      setLocality(property.locality ?? "");
-      setGateTiming(property.gate_timing ?? "");
-      setFoodRules(property.food_rules ?? "");
-      setVisitorRules(property.visitor_rules ?? "");
-      setSelected(new Set(facilityChips(property.facilities)));
-    }
-  }, [property]);
-
-  if (!property) return null;
-
-  async function save() {
-    setBusy(true);
-    try {
-      await api.patch(`/properties/${property!.id}`, {
-        name: name.trim(),
-        address: address.trim() || null,
-        city: city.trim() || null,
-        locality: locality.trim() || null,
-        gate_timing: gateTiming.trim() || null,
-        food_rules: foodRules.trim() || null,
-        visitor_rules: visitorRules.trim() || null,
-        facilities: [...selected].join(","),
-      });
-      onSaved();
-    } catch (e: any) {
-      Alert.alert("Error", e?.message ?? "Failed");
-    } finally {
-      setBusy(false);
-    }
-  }
-
   return (
-    <Sheet visible onClose={onClose}>
-      <ScrollView style={{ maxHeight: 560 }} contentContainerStyle={{ gap: 10 }}>
-        <Text style={styles.modalTitle}>Edit building</Text>
-        <Text style={styles.fieldLabel}>Building name</Text>
-        <TextInput style={styles.input} value={name} onChangeText={setName} />
-        <Text style={styles.fieldLabel}>Address</Text>
-        <TextInput style={styles.input} placeholder="Area, city" value={address} onChangeText={setAddress} />
-        <Text style={styles.fieldLabel}>Locality</Text>
-        <TextInput style={styles.input} value={locality} onChangeText={setLocality} />
-        <Text style={styles.fieldLabel}>City</Text>
-        <TextInput style={styles.input} value={city} onChangeText={setCity} />
-        <Text style={styles.fieldLabel}>Gate timing</Text>
-        <TextInput style={styles.input} value={gateTiming} onChangeText={setGateTiming} />
-        <Text style={styles.fieldLabel}>Food rules</Text>
-        <TextInput style={styles.input} value={foodRules} onChangeText={setFoodRules} multiline />
-        <Text style={styles.fieldLabel}>Visitor rules</Text>
-        <TextInput style={styles.input} value={visitorRules} onChangeText={setVisitorRules} multiline />
-        <Text style={styles.fieldLabel}>Facilities — auto-attached to every room unless a room was customized</Text>
-        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-          {FACILITY_OPTIONS.map((f) => (
-            <TouchableOpacity
-              key={f.key}
-              style={[styles.chip, selected.has(f.key) && styles.chipOn]}
-              onPress={() =>
-                setSelected((prev) => {
-                  const n = new Set(prev);
-                  if (n.has(f.key)) n.delete(f.key);
-                  else n.add(f.key);
-                  return n;
-                })
-              }
-            >
-              <Ionicons name={f.icon as any} size={15} color={selected.has(f.key) ? "#fff" : theme.textLight} />
-              <Text style={[styles.chipText, selected.has(f.key) && styles.chipTextOn]}>{f.label}</Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-        <View style={{ flexDirection: "row", gap: 8, marginTop: 6 }}>
-          <TouchableOpacity style={[styles.cta, { flex: 1, marginTop: 0 }]} onPress={save} disabled={busy || !name.trim()}>
-            {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.ctaText}>Save PG</Text>}
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.cancelBtn} onPress={onClose}>
-            <Text style={styles.cancelBtnText}>Cancel</Text>
-          </TouchableOpacity>
-        </View>
-      </ScrollView>
-    </Sheet>
+    <View style={styles.summaryTile}>
+      <View
+        style={[
+          styles.summaryIcon,
+          { backgroundColor: tint ? tint : design.colors.primaryLight },
+        ]}
+      >
+        <Ionicons name={icon as any} size={15} color={tint ? "#fff" : design.colors.primary} />
+      </View>
+      <AppText
+        variant="h4"
+        color={design.colors.textPrimary}
+        numberOfLines={1}
+        adjustsFontSizeToFit
+      >
+        {value}
+      </AppText>
+      <AppText variant="caption" color={design.colors.textMuted} numberOfLines={1}>
+        {label}
+      </AppText>
+    </View>
+  );
+}
+
+function LegendDot({ color, label }: { color: string; label: string }) {
+  return (
+    <View style={styles.legendItem}>
+      <View style={[styles.legendSwatch, { backgroundColor: color }]} />
+      <AppText variant="caption" color={design.colors.textMuted}>
+        {label}
+      </AppText>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: theme.bg },
-  content: { padding: 16, paddingTop: 4, paddingBottom: 50 },
-  h1: { fontSize: 26, fontWeight: "800", color: theme.text, letterSpacing: -0.3 },
-  sub: { fontSize: 12, color: theme.textLight, marginTop: 2, marginBottom: 14 },
-  card: {
-    backgroundColor: "#fff",
-    borderRadius: 20,
-    padding: 16,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: theme.border,
+  container: { flex: 1, backgroundColor: design.colors.background },
+  hero: {
+    backgroundColor: design.colors.primary,
+    paddingHorizontal: 16,
+    paddingTop: 14,
+    paddingBottom: 18,
+    borderBottomLeftRadius: 24,
+    borderBottomRightRadius: 24,
+    overflow: "hidden",
   },
-  propHead: { flexDirection: "row", alignItems: "center", gap: 12 },
-  propIcon: { backgroundColor: theme.accentSoft, borderRadius: 12, width: 40, height: 40, alignItems: "center", justifyContent: "center" },
-  propName: { fontSize: 16, fontWeight: "800", color: theme.text },
-  section: { fontSize: 11, fontWeight: "800", color: theme.textLight, marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.4 },
-  meta: { fontSize: 12, color: theme.textLight, marginTop: 2 },
-  divider: { height: 1, backgroundColor: theme.border, marginVertical: 12 },
-  fChip: { flexDirection: "row", alignItems: "center", gap: 4, backgroundColor: theme.accentSoft, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 5 },
-  fChipText: { fontSize: 11, fontWeight: "700", color: theme.accentText },
-  modeBtn: { flexDirection: "row", alignItems: "center", gap: 4, backgroundColor: theme.infoSoft, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6 },
-  modeBtnText: { fontSize: 11, fontWeight: "800", color: theme.accentText },
-  actionRow: { flexDirection: "row", gap: 8, marginTop: 12, alignItems: "center" },
-  actionBtn: { flexDirection: "row", alignItems: "center", gap: 4, borderRadius: 999, borderWidth: 1, borderColor: theme.border, backgroundColor: theme.chipBg, paddingVertical: 6, paddingHorizontal: 12 },
-  actionDanger: { backgroundColor: "#fef2f2", borderColor: "#fecaca" },
-  actionBtnText: { fontSize: 12, fontWeight: "700", color: theme.accentText },
-  cta: { backgroundColor: theme.accent, borderRadius: 999, flexDirection: "row", gap: 8, alignItems: "center", justifyContent: "center", padding: 15, marginTop: 6 },
-  ctaText: { color: "#fff", fontWeight: "800", fontSize: 15 },
-  cancelBtn: { backgroundColor: theme.chipBg, borderRadius: 999, paddingVertical: 15, paddingHorizontal: 18, alignItems: "center" },
-  cancelBtnText: { color: theme.text, fontWeight: "700", fontSize: 14 },
-  error: { color: theme.danger, marginBottom: 8 },
-  modalTitle: { fontSize: 20, fontWeight: "800", color: theme.text },
-  fieldLabel: { fontSize: 11, fontWeight: "700", color: theme.textLight },
-  input: { borderWidth: 1, borderColor: theme.border, backgroundColor: theme.cardSoft, borderRadius: 14, padding: 12, fontSize: 15, color: theme.text },
-  chip: { flexDirection: "row", alignItems: "center", gap: 5, borderRadius: 999, borderWidth: 1, borderColor: theme.chipBorder, backgroundColor: theme.chipBg, paddingVertical: 7, paddingHorizontal: 13 },
-  chipOn: { backgroundColor: theme.accent, borderColor: theme.accent },
-  chipText: { fontSize: 12, fontWeight: "700", color: theme.textLight },
-  chipTextOn: { color: "#fff" },
+  heroGlow: {
+    position: "absolute",
+    width: 150,
+    height: 150,
+    borderRadius: 75,
+    backgroundColor: "rgba(255,255,255,0.08)",
+    top: -70,
+    right: -30,
+  },
+  heroTop: { flexDirection: "row", alignItems: "center", gap: 10 },
+  eyebrow: { fontSize: 10, fontWeight: "800", letterSpacing: 1.1, color: "rgba(255,255,255,0.72)", marginBottom: 3 },
+  heroIconBtn: {
+    width: 42,
+    height: 42,
+    borderRadius: 14,
+    backgroundColor: "rgba(255,255,255,0.16)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  scroll: { flex: 1 },
+  content: { padding: 16, paddingTop: 14, paddingBottom: 110 },
+
+  statsRow: { flexDirection: "row", gap: 8, marginBottom: 18 },
+  summaryTile: {
+    flex: 1,
+    minHeight: 84,
+    borderRadius: 16,
+    backgroundColor: "#fff",
+    borderWidth: 1,
+    borderColor: design.colors.border,
+    padding: 11,
+    ...getShadow("sm"),
+  },
+  summaryIcon: {
+    width: 26,
+    height: 26,
+    borderRadius: 9,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 6,
+  },
+
+  sectionRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+    marginBottom: 10,
+  },
+  sectionLabel: { fontSize: 11, fontWeight: "800", letterSpacing: 0.9 },
+  legendRow: { flexDirection: "row", gap: 8 },
+  legendItem: { flexDirection: "row", alignItems: "center", gap: 4 },
+  legendSwatch: { width: 8, height: 8, borderRadius: 4 },
+
+  buildingCard: {
+    backgroundColor: "#fff",
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: design.colors.border,
+    padding: 14,
+    ...getShadow("sm"),
+  },
+  buildingHeader: { flexDirection: "row", alignItems: "center", gap: 10 },
+  buildingIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: 13,
+    backgroundColor: design.colors.primaryLight,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  buildingNameRow: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 2 },
+  occupancyTrack: {
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: design.colors.surfaceVariant,
+    overflow: "hidden",
+    marginTop: 12,
+  },
+  occupancyFill: { height: 4, borderRadius: 2, backgroundColor: design.colors.primary },
+  buildingBody: { marginTop: 14, gap: 14 },
+  emptyFloor: {
+    padding: 12,
+    borderRadius: 10,
+    backgroundColor: design.colors.surfaceVariant,
+  },
+  floorBlock: { gap: 8 },
+  floorRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 2,
+  },
+  floorDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: design.colors.primary },
+  floorLabel: { fontSize: 10, fontWeight: "800", letterSpacing: 0.8 },
+  roomRow: { gap: 8, paddingRight: 4 },
+  roomTile: {
+    minWidth: 104,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: design.colors.border,
+    backgroundColor: design.colors.background,
+    padding: 10,
+    gap: 7,
+  },
+  roomTileTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 6 },
+  bedDots: { flexDirection: "row", flexWrap: "wrap", gap: 4, minHeight: 10 },
+  bedDot: { width: 10, height: 10, borderRadius: 3 },
+  editLayoutBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    minHeight: 42,
+    borderRadius: 11,
+    backgroundColor: design.colors.primaryLight,
+    marginTop: 2,
+  },
+  addBuildingCta: {
+    marginTop: 14,
+    minHeight: 50,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderStyle: "dashed",
+    borderColor: design.colors.primary,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    backgroundColor: "rgba(79,70,229,0.03)",
+  },
+  error: { color: design.colors.danger, marginTop: 16, textAlign: "center", fontSize: 13 },
+  formError: { color: design.colors.danger, marginTop: 8, textAlign: "center", fontSize: 12 },
 });

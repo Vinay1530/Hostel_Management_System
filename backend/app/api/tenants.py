@@ -18,6 +18,7 @@ from app.core.security import AuthContext, ensure_login_user, require_staff
 from app.models.enums import BedStatus, DocType, Role
 from app.models.models import Bed, Floor, Property, Room, Stay, Tenant, TenantDocument
 from app.services.collaboration import sync_tenant_participation
+from app.api.occupancy import _sync_map_for_stay
 from app.schemas.schemas import (
     DocumentOut,
     ImportPreview,
@@ -184,6 +185,7 @@ def create_stay(body: StayIn, auth: AuthContext = Depends(require_staff), db: Se
         .join(Bed, Bed.room_id == Room.id)
         .where(Bed.id == bed.id, Property.organization_id == auth.org_id)
     ).scalar_one()
+    _sync_map_for_stay(db, auth.org_id, bed.id, tenant.id)
     sync_tenant_participation(db, prop, tenant, joined=True)
     db.commit()
     db.refresh(stay)
@@ -212,6 +214,7 @@ def end_stay(
     floor = db.get(Floor, room.floor_id)
     prop = db.get(Property, floor.property_id)
     db.flush()
+    _sync_map_for_stay(db, auth.org_id, stay.bed_id, None)
     sync_tenant_participation(db, prop, stay.tenant, joined=False)
     db.commit()
     db.refresh(stay)
@@ -445,6 +448,7 @@ async def import_execute(
             .join(Bed, Bed.room_id == Room.id)
             .where(Bed.id == bed.id, Property.organization_id == auth.org_id)
         ).scalar_one()
+        _sync_map_for_stay(db, auth.org_id, bed.id, tenant.id)
         sync_tenant_participation(db, prop, tenant, joined=True)
         stays_created += 1
 

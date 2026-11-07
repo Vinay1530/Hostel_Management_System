@@ -501,13 +501,14 @@ class NotificationOut(ORMModel):
     body: str
     complaint_id: uuid.UUID | None
     request_id: uuid.UUID | None = None
+    tenant_id: uuid.UUID | None = None
     created_at: datetime
     read_at: datetime | None
 
 
 class ConversationOut(BaseModel):
     id: uuid.UUID
-    property_id: uuid.UUID
+    property_id: uuid.UUID | None
     property_name: str
     type: ConversationType
     title: str
@@ -521,6 +522,7 @@ class ConversationContactOut(BaseModel):
     user_id: uuid.UUID
     name: str
     role: Role
+    phone: str | None = None
     room_number: str | None
     property_id: uuid.UUID
     property_name: str
@@ -598,6 +600,11 @@ class ChangeRequestIn(BaseModel):
     note: str | None = Field(None, max_length=2000)
 
 
+class PhoneChangeRequestIn(BaseModel):
+    new_phone: str = Field(pattern=r"^\d{10,15}$")
+    note: str | None = Field(None, max_length=2000)
+
+
 class GuestBookingIn(BaseModel):
     org_id: uuid.UUID
     guest_name: str = Field(min_length=1, max_length=200)
@@ -622,6 +629,7 @@ class RequestOut(ORMModel):
     tenant_id: uuid.UUID | None
     guest_name: str | None
     guest_phone: str | None
+    requested_phone: str | None = None
     building_id: uuid.UUID | None
     floor_id: uuid.UUID | None
     room_id: uuid.UUID | None
@@ -631,6 +639,7 @@ class RequestOut(ORMModel):
     decided_at: datetime | None
     # resolved labels for display
     tenant_name: str | None = None
+    tenant_phone: str | None = None
     building_name: str | None = None
     floor_name: str | None = None
     room_number: str | None = None
@@ -717,3 +726,169 @@ class MyTransactionRow(ORMModel):
     due_date: date
     status: InvoiceStatus
     payments: list[MyPayment] = []
+
+
+# ---------- feedback ----------
+
+class TenantFeedbackIn(BaseModel):
+    property_id: uuid.UUID
+    rating: int = Field(ge=1, le=5)
+    category: str = Field(min_length=1, max_length=50)
+    comment: str | None = None
+
+
+class TenantFeedbackOut(ORMModel):
+    id: uuid.UUID
+    organization_id: uuid.UUID
+    tenant_id: uuid.UUID
+    stay_id: uuid.UUID | None
+    property_id: uuid.UUID
+    rating: int
+    category: str
+    comment: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
+# ---------- security deposit ----------
+
+class SecurityDepositIn(BaseModel):
+    stay_id: uuid.UUID
+    amount_paise: int = Field(gt=0)
+
+
+class SecurityDepositOut(ORMModel):
+    id: uuid.UUID
+    organization_id: uuid.UUID
+    stay_id: uuid.UUID
+    amount_paise: int
+    status: str
+    held_by_user_id: uuid.UUID | None
+    refund_date: date | None
+    deductions_paise: int
+    notes: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
+# ---------- payment reminder ----------
+
+class PaymentReminderIn(BaseModel):
+    invoice_id: uuid.UUID
+    reminder_type: str = Field(min_length=1, max_length=20)
+    reminder_date: datetime
+    channel: str = Field(default="email", min_length=1, max_length=20)
+
+
+class PaymentReminderOut(ORMModel):
+    id: uuid.UUID
+    organization_id: uuid.UUID
+    invoice_id: uuid.UUID
+    reminder_type: str
+    reminder_date: datetime
+    sent_at: datetime | None
+    channel: str
+    status: str
+    created_at: datetime
+
+
+# ---------- invoice template ----------
+
+class InvoiceTemplateIn(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    template_data: dict = Field(...)
+
+
+class InvoiceTemplateOut(ORMModel):
+    id: uuid.UUID
+    organization_id: uuid.UUID
+    name: str
+    template_data: dict
+    is_default: bool
+    created_by_user_id: uuid.UUID | None
+    created_at: datetime
+    updated_at: datetime
+
+
+# ---------- analytics data ----------
+
+class AnalyticsDataIn(BaseModel):
+    metric_type: str = Field(min_length=1, max_length=50)
+    metric_value: dict = Field(...)
+    start_date: date = Field(...)
+    end_date: date = Field(...)
+
+
+class AnalyticsDataOut(ORMModel):
+    id: uuid.UUID
+    organization_id: uuid.UUID
+    metric_type: str
+    metric_value: dict
+    start_date: date
+    end_date: date
+    created_at: datetime
+
+
+# ---------- custom tenant field ----------
+
+class CustomTenantFieldIn(BaseModel):
+    tenant_id: uuid.UUID
+    field_name: str = Field(min_length=1, max_length=100)
+    field_value: str = Field(...)
+    field_type: str = Field(default="text", min_length=1, max_length=20)
+
+
+class CustomTenantFieldOut(ORMModel):
+    id: uuid.UUID
+    organization_id: uuid.UUID
+    tenant_id: uuid.UUID
+    field_name: str
+    field_value: str
+    field_type: str
+    created_at: datetime
+    updated_at: datetime
+
+
+# ---------- occupancy map ----------
+
+class OccupancyMapIn(BaseModel):
+    property_id: uuid.UUID
+    floor_id: uuid.UUID
+    room_id: uuid.UUID
+    bed_id: uuid.UUID
+    x_position: int = Field(ge=0)
+    y_position: int = Field(ge=0)
+    floor_number: int = Field(ge=1)
+    room_number: str = Field(min_length=1, max_length=20)
+    bed_label: str = Field(max_length=10)
+    is_occupied: bool = False
+
+
+class OccupancyMapOut(ORMModel):
+    id: uuid.UUID
+    organization_id: uuid.UUID
+    property_id: uuid.UUID
+    floor_id: uuid.UUID
+    room_id: uuid.UUID
+    bed_id: uuid.UUID
+    x_position: int
+    y_position: int
+    floor_number: int
+    room_number: str
+    bed_label: str
+    is_occupied: bool
+    tenant_id: uuid.UUID | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class OccupancyAssignIn(BaseModel):
+    tenant_id: uuid.UUID
+    start_date: date
+    agreed_rent_paise: int = Field(ge=0)
+    deposit_paise: int = Field(default=0, ge=0)
+
+
+class OccupancyAssignOut(BaseModel):
+    map: OccupancyMapOut
+    stay_id: uuid.UUID

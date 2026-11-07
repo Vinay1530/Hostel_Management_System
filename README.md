@@ -11,8 +11,8 @@ Implementation status is tracked in [`docs/status.md`](docs/status.md).
 | Layer | Choice |
 |---|---|
 | Backend | FastAPI + SQLAlchemy 2.0 + Alembic (PostgreSQL) |
-| Background jobs | Celery (Redis broker) — monthly rent generation |
-| Auth | Phone OTP → JWT, roles: owner / manager / tenant |
+| Background jobs | In-process asyncio scheduler (default) or Celery+Redis beat via `--profile jobs` |
+| Auth | Phone + password login (`POST /auth/login`) → JWT, roles: owner / manager / tenant |
 | Multi-tenancy | `organization_id` on every table + org-scoped query filter middleware |
 | Frontend | React Native app — Expo SDK 54 (expo-router) |
 | Files | Local disk for MVP, S3-ready interface |
@@ -75,12 +75,24 @@ and development OTP mode returns OTPs in API responses. Use only non-sensitive
 test data, and stop the tunnel when finished. PostgreSQL is not routed through
 the tunnel.
 
-### Monthly rent generation
+### Automation (invoicing, late fees, complaint escalation)
 
-Bills are generated **inline** from the Dues screen ("Generate month's bills"
-button) or via `POST /invoices/generate {month: "YYYY-MM"}` — no extra
-infrastructure needed. The Redis + Celery worker pair is kept behind the
-`jobs` profile for scheduled automation and future WhatsApp reminders (weeks 9–10):
+The backend runs an in-process asyncio scheduler (FastAPI lifespan) every
+`AUTOMATION_INTERVAL_SECONDS` (default 3600) — no extra infrastructure needed.
+Each pass:
+
+1. **Monthly invoicing** — `POST /invoices/generate {month: "YYYY-MM"}` logic runs
+   for every organization (idempotent: already-billed stays are skipped, and the
+   Dues screen's "Generate Bills" sheet calls it inline with the selected PG scope).
+2. **Late fees** — one `late_fee` Charge per overdue invoice (`pending`/`partial`
+   past `due_date`), amount `LATE_FEE_CHARGE_PAISE` (default ₹50), folded into the
+   invoice total. Dedupe ensures repeated passes never stack fees.
+3. **Complaint escalation** — complaints stuck in `open`/`in_progress` longer than
+   `COMPLAINT_ESCALATION_HOURS` (default 24) notify all owners/managers once
+   (`complaints.escalated_at` dedupes; migration 0009).
+
+Deployments using Celery can instead rely on the existing beat task
+(`generate-rent-invoices`, 1st of month 00:30) behind the `jobs` profile:
 
 ```bash
 docker compose --profile jobs up -d   # enables redis + worker with the beat schedule
@@ -98,8 +110,27 @@ cd backend && alembic upgrade head && uvicorn app.main:app --reload
 ## Python-based billing cycle
 
 `POST /invoices/generate {month: "YYYY-MM"}` generates one invoice per active stay
-(inline in the API — the "Generate month's bills" button in the app calls this).
-With the `jobs` profile enabled (redis + worker), Celery beat runs it monthly on the 1st.
+(inline in the API — the "Generate Bills" button in the Dues tab calls this).
+Mid-month move-ins are billed pro-rata when the property has
+`pro_rate_first_month` enabled (day-count based). Due dates follow the property
+`advance`/`arrears` cycle. The in-process scheduler reruns it hourly; reruns are
+no-ops for already-billed stays.
+
+## Security deposits and the live occupancy map
+
+- `POST /security-deposits/{id}/settle` — sets a held deposit off against the
+  tenant's oldest unpaid invoices (payments recorded as `bank_transfer` with a
+  "Deposit settlement" reference), records `deductions_paise`, and re-statuses
+  the deposit to `refunded` (leftover) or `forfeited` (fully consumed).
+- `POST /occupancy-maps/{map_id}/assign` — allocate a tenant directly onto a bed from
+  the occupancy map: validates bed/tenant conflicts, creates the active Stay,
+  syncs tenant participation and flips the map tile to occupied.
+- `POST /occupancy-maps/{map_id}/vacate` — ends the active stay on the bed and
+  frees the tile.
+- `POST /occupancy-maps/{property_id}/seed` — one-tap grid map built from the
+  property's existing beds (8 per row; Ground floor aware).
+- The map stays live no matter where a tenant is assigned: stay creation, stay
+  end, CSV import, and staff move-requests all sync the corresponding tile.
 
 ## Complaints and property chat
 

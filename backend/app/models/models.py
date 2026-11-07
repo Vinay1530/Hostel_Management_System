@@ -42,6 +42,7 @@ class User(Base):
     phone: Mapped[str] = mapped_column(String(20), unique=True)
     name: Mapped[str | None] = mapped_column(String(200))
     email: Mapped[str | None] = mapped_column(String(200))
+    avatar_url: Mapped[str | None] = mapped_column(String(500))
     password_hash: Mapped[str | None] = mapped_column(String(300))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
@@ -145,6 +146,8 @@ class Tenant(Base):
 
     stays: Mapped[list["Stay"]] = relationship(back_populates="tenant")
     documents: Mapped[list["TenantDocument"]] = relationship(back_populates="tenant", cascade="all, delete-orphan")
+    feedbacks: Mapped[list["TenantFeedback"]] = relationship(back_populates="tenant", cascade="all, delete-orphan")
+    custom_fields: Mapped[list["CustomTenantField"]] = relationship(back_populates="tenant", cascade="all, delete-orphan")
 
 
 class TenantDocument(Base):
@@ -178,6 +181,7 @@ class Stay(Base):
 
     tenant: Mapped["Tenant"] = relationship(back_populates="stays")
     bed: Mapped["Bed"] = relationship()
+    security_deposit: Mapped["SecurityDeposit"] = relationship(back_populates="stay", uselist=False)
 
     __table_args__ = (
         Index("ix_stays_bed_active", "bed_id", "active"),
@@ -204,6 +208,7 @@ class RentInvoice(Base):
 
     stay: Mapped["Stay"] = relationship()
     payments: Mapped[list["Payment"]] = relationship(back_populates="invoice")
+    reminders: Mapped[list["PaymentReminder"]] = relationship(back_populates="invoice")
 
 
 class Payment(Base):
@@ -261,6 +266,7 @@ class Complaint(Base):
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    escalated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class ComplaintAttachment(Base):
@@ -314,6 +320,9 @@ class InAppNotification(Base):
     body: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    tenant_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("tenants.id", ondelete="SET NULL"), index=True
+    )
 
 
 class Conversation(Base):
@@ -332,7 +341,9 @@ class Conversation(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(PortableUuid, primary_key=True, default=uuid.uuid4)
     organization_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
-    property_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("properties.id", ondelete="CASCADE"), nullable=False, index=True)
+    property_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("properties.id", ondelete="CASCADE"), index=True
+    )
     type: Mapped[ConversationType] = mapped_column(
         Enum(ConversationType, name="conversation_type_enum", native_enum=False), nullable=False
     )
@@ -382,6 +393,7 @@ class ChangeRequest(Base):
     )
     guest_name: Mapped[str | None] = mapped_column(String(200))
     guest_phone: Mapped[str | None] = mapped_column(String(20))
+    requested_phone: Mapped[str | None] = mapped_column(String(20))
     # preference specificity: deepest non-null id wins ("anywhere" = all null)
     building_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("properties.id", ondelete="SET NULL"), index=True
@@ -398,3 +410,169 @@ class ChangeRequest(Base):
     decided_by_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class TenantFeedback(Base):
+    __tablename__ = "tenant_feedbacks"
+
+    id: Mapped[uuid.UUID] = mapped_column(PortableUuid, primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    stay_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("stays.id", ondelete="SET NULL"), index=True
+    )
+    property_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("properties.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    rating: Mapped[int] = mapped_column(Integer, nullable=False)
+    category: Mapped[str] = mapped_column(String(50), nullable=False)
+    comment: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    tenant: Mapped["Tenant"] = relationship("Tenant", back_populates="feedbacks")
+    stay: Mapped["Stay"] = relationship("Stay")
+
+
+class SecurityDeposit(Base):
+    __tablename__ = "security_deposits"
+
+    id: Mapped[uuid.UUID] = mapped_column(PortableUuid, primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    stay_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("stays.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    amount_paise: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="held", index=True)
+    held_by_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    refund_date: Mapped[date | None] = mapped_column(Date)
+    deductions_paise: Mapped[int] = mapped_column(Integer, default=0)
+    notes: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    stay: Mapped["Stay"] = relationship("Stay", back_populates="security_deposit")
+
+
+class PaymentReminder(Base):
+    __tablename__ = "payment_reminders"
+
+    id: Mapped[uuid.UUID] = mapped_column(PortableUuid, primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    invoice_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("rent_invoices.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    reminder_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    reminder_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    channel: Mapped[str] = mapped_column(String(20), default="email")
+    status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    invoice: Mapped["RentInvoice"] = relationship("RentInvoice", back_populates="reminders")
+
+
+class InvoiceTemplate(Base):
+    __tablename__ = "invoice_templates"
+
+    id: Mapped[uuid.UUID] = mapped_column(PortableUuid, primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    template_data: Mapped[dict] = mapped_column(
+        Text,
+        nullable=False,
+    )
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class AnalyticsData(Base):
+    __tablename__ = "analytics_data"
+
+    id: Mapped[uuid.UUID] = mapped_column(PortableUuid, primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    metric_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    metric_value: Mapped[dict] = mapped_column(Text)
+    start_date: Mapped[date] = mapped_column(Date, nullable=False)
+    end_date: Mapped[date] = mapped_column(Date, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class CustomTenantField(Base):
+    __tablename__ = "custom_tenant_fields"
+
+    id: Mapped[uuid.UUID] = mapped_column(PortableUuid, primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    field_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    field_value: Mapped[str] = mapped_column(Text, nullable=False)
+    field_type: Mapped[str] = mapped_column(String(20), default="text")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    tenant: Mapped["Tenant"] = relationship("Tenant", back_populates="custom_fields")
+
+
+class OccupancyMap(Base):
+    __tablename__ = "occupancy_maps"
+
+    id: Mapped[uuid.UUID] = mapped_column(PortableUuid, primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    property_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("properties.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    floor_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("floors.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    room_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("rooms.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    bed_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("beds.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    x_position: Mapped[int] = mapped_column(Integer, nullable=False)
+    y_position: Mapped[int] = mapped_column(Integer, nullable=False)
+    floor_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    room_number: Mapped[str] = mapped_column(String(20), nullable=False)
+    bed_label: Mapped[str] = mapped_column(String(10), nullable=False)
+    is_occupied: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    tenant_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("tenants.id", ondelete="SET NULL"), index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    bed: Mapped["Bed"] = relationship("Bed")
+    tenant: Mapped["Tenant"] = relationship("Tenant")
+
+
+# Add backref for Tenant -> TenantFeedback
+from sqlalchemy.orm import relationship
+Tenant.feedbacks = relationship("TenantFeedback", back_populates="tenant")
+Tenant.custom_fields = relationship("CustomTenantField", back_populates="tenant")
+
+# Add backref for Stay -> SecurityDeposit
+Stay.security_deposit = relationship("SecurityDeposit", back_populates="stay", uselist=False)
+
+# Add backref for RentInvoice -> PaymentReminder
+RentInvoice.reminders = relationship("PaymentReminder", back_populates="invoice")

@@ -78,8 +78,9 @@ class ConversationType(str, enum.Enum):
 
 
 class RequestKind(str, enum.Enum):
-    change = "change"        # tenant asks for bed/room/floor/building change
-    booking = "booking"      # guest asks to book a bed
+    change = "change"              # tenant asks for bed/room/floor/building change
+    booking = "booking"            # guest asks to book a bed
+    phone_change = "phone_change"  # tenant asks to update their login phone
 
 
 class RequestStatus(str, enum.Enum):
@@ -88,3 +89,33 @@ class RequestStatus(str, enum.Enum):
     rejected = "rejected"
     moved = "moved"
     completed = "completed"
+
+
+class FeedbackCategory(str, enum.Enum):
+    overall = "overall"
+    cleanliness = "cleanliness"
+    food = "food"
+    staff = "staff"
+    maintenance = "maintenance"
+    location = "location"
+    value = "value"
+
+
+class DepositStatus(str, enum.Enum):
+    held = "held"
+    refund_pending = "refund_pending"
+    refunded = "refunded"
+    forfeited = "forfeited"
+
+
+class ReminderType(str, enum.Enum):
+    initial = "initial"
+    follow_up = "follow_up"
+    final = "final"
+
+
+class ReminderStatus(str, enum.Enum):
+    pending = "pending"
+    sent = "sent"
+    failed = "failed"
+    skipped = "skipped"

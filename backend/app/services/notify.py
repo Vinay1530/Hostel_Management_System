@@ -26,6 +26,7 @@ def notify_staff(
     body: str,
     complaint_id: uuid.UUID | None = None,
     request_id: uuid.UUID | None = None,
+    tenant_id: uuid.UUID | None = None,
 ) -> None:
     for user_id in staff_user_ids(db, org_id):
         db.add(
@@ -33,6 +34,7 @@ def notify_staff(
                 user_id=user_id,
                 complaint_id=complaint_id,
                 request_id=request_id,
+                tenant_id=tenant_id,
                 title=title,
                 body=body,
             )

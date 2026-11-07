@@ -1,5 +1,5 @@
 import { useAuth } from "@/lib/auth";
-import { theme } from "@/lib/theme";
+import { design } from "@/lib/design";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useState } from "react";
@@ -48,7 +48,7 @@ export default function Login() {
         org_name: rOrg.trim(),
       });
       const role = orgs[0]?.role;
-      router.replace(role === "tenant" ? "/tenant" : "/(tabs)/dashboard");
+      router.replace(role === "tenant" ? "/(tenant-tabs)/home" : "/(tabs)/dashboard");
     } catch (e: any) {
       setError(e?.message ?? "Login failed");
     } finally {
@@ -124,7 +124,7 @@ export default function Login() {
 
         {mode === "login" && (
           <Pressable style={styles.guestLink} onPress={() => router.push("/guest")}>
-            <Ionicons name="compass-outline" size={16} color={theme.accentText} />
+            <Ionicons name="compass-outline" size={16} color={design.colors.primary} />
             <Text style={styles.guestText}>Looking for a bed? Browse PGs as a guest</Text>
           </Pressable>
         )}
@@ -134,22 +134,22 @@ export default function Login() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: theme.bg, alignItems: "center", justifyContent: "center", padding: 24 },
-  card: { backgroundColor: theme.card, borderRadius: 20, padding: 24, width: "100%", maxWidth: 400, borderWidth: 1, borderColor: theme.border, gap: 4 },
+  container: { flex: 1, backgroundColor: design.colors.background, alignItems: "center", justifyContent: "center", padding: 24 },
+  card: { backgroundColor: design.colors.surface, borderRadius: 20, padding: 24, width: "100%", maxWidth: 400, borderWidth: 1, borderColor: design.colors.border, gap: 4 },
   logoRow: { flexDirection: "row", alignItems: "center", gap: 12, marginBottom: 8 },
-  logo: { backgroundColor: theme.accent, borderRadius: 14, width: 48, height: 48, alignItems: "center", justifyContent: "center" },
-  title: { fontSize: 24, fontWeight: "800", color: theme.text },
-  subtitle: { color: theme.textLight, fontSize: 13, marginTop: 2 },
-  toggleRow: { flexDirection: "row", backgroundColor: theme.chipBg, borderRadius: 12, padding: 3, marginBottom: 14, marginTop: 8 },
+  logo: { backgroundColor: design.colors.primary, borderRadius: 14, width: 48, height: 48, alignItems: "center", justifyContent: "center" },
+  title: { fontSize: 24, fontWeight: "800", color: design.colors.textPrimary },
+  subtitle: { color: design.colors.textSecondary, fontSize: 13, marginTop: 2 },
+  toggleRow: { flexDirection: "row", backgroundColor: design.colors.surfaceVariant, borderRadius: 12, padding: 3, marginBottom: 14, marginTop: 8 },
   toggle: { flex: 1, paddingVertical: 9, alignItems: "center", borderRadius: 10 },
-  toggleOn: { backgroundColor: theme.accent },
-  toggleText: { fontWeight: "700", color: theme.textLight, fontSize: 13 },
+  toggleOn: { backgroundColor: design.colors.primary },
+  toggleText: { fontWeight: "700", color: design.colors.textMuted, fontSize: 13 },
   toggleTextOn: { color: "#fff" },
-  sectionLabel: { fontSize: 12, fontWeight: "700", color: theme.textLight, marginBottom: 6 },
-  input: { borderWidth: 1, borderColor: theme.chipBorder, backgroundColor: "#fff", borderRadius: 12, padding: 12, fontSize: 16, marginBottom: 10, color: theme.text },
-  button: { backgroundColor: theme.accent, borderRadius: 12, padding: 14, alignItems: "center", marginTop: 4 },
+  sectionLabel: { fontSize: 12, fontWeight: "700", color: design.colors.textMuted, marginBottom: 6 },
+  input: { borderWidth: 1, borderColor: design.colors.border, backgroundColor: "#fff", borderRadius: 12, padding: 12, fontSize: 16, marginBottom: 10, color: design.colors.textPrimary },
+  button: { backgroundColor: design.colors.primary, borderRadius: 12, padding: 14, alignItems: "center", marginTop: 4 },
   buttonText: { color: "#fff", fontWeight: "800", fontSize: 16 },
-  hint: { fontSize: 11, color: theme.warn, marginBottom: 4 },
+  hint: { fontSize: 11, color: design.colors.warning, marginBottom: 4 },
   guestLink: {
     flexDirection: "row",
     alignItems: "center",
@@ -158,8 +158,8 @@ const styles = StyleSheet.create({
     marginTop: 12,
     paddingVertical: 10,
     borderRadius: 12,
-    backgroundColor: theme.chipBg,
+    backgroundColor: design.colors.surfaceVariant,
   },
-  guestText: { fontSize: 13, fontWeight: "700", color: theme.accentText },
-  error: { color: theme.danger, marginTop: 10, textAlign: "center" },
+  guestText: { fontSize: 13, fontWeight: "700", color: design.colors.primary },
+  error: { color: design.colors.danger, marginTop: 10, textAlign: "center" },
 });

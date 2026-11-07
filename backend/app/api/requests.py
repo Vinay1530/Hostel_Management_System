@@ -8,9 +8,15 @@ from sqlalchemy.orm import Session
 from app.core.db import get_db
 from app.core.security import AuthContext, ensure_login_user, get_auth_context, require_staff
 from app.models.enums import RequestKind, RequestStatus, Role
-from app.models.models import Bed, ChangeRequest, Floor, Property, Room, Stay, Tenant
+from app.models.models import Bed, ChangeRequest, Floor, Property, Room, Stay, Tenant, User
 from app.services.collaboration import sync_tenant_participation
-from app.schemas.schemas import ChangeRequestIn, RequestDecisionIn, RequestOut
+from app.api.occupancy import _sync_map_for_stay
+from app.schemas.schemas import (
+    ChangeRequestIn,
+    PhoneChangeRequestIn,
+    RequestDecisionIn,
+    RequestOut,
+)
 from app.services.notify import notify_staff, notify_user
 
 router = APIRouter(tags=["requests"])
@@ -61,9 +67,11 @@ def _validate_targets(
 
 def _resolved(db: Session, req: ChangeRequest) -> dict:
     tenant_name = None
+    tenant_phone = None
     if req.tenant_id:
         t = db.get(Tenant, req.tenant_id)
         tenant_name = t.full_name if t else None
+        tenant_phone = t.phone if t else None
 
     bed = db.get(Bed, req.bed_id) if req.bed_id else None
     room = db.get(Room, req.room_id or (bed.room_id if bed else None)) if (req.room_id or bed) else None
@@ -72,6 +80,7 @@ def _resolved(db: Session, req: ChangeRequest) -> dict:
 
     return {
         "tenant_name": tenant_name,
+        "tenant_phone": tenant_phone,
         "building_name": prop.name if prop else None,
         "floor_name": floor.name if floor else None,
         "room_number": room.number if room else None,
@@ -84,6 +93,53 @@ def _out(db: Session, req: ChangeRequest) -> RequestOut:
     for key, value in _resolved(db, req).items():
         setattr(out, key, value)
     return out
+
+
+def _apply_phone_change(db: Session, req: ChangeRequest, auth: AuthContext) -> None:
+    """Approve a phone-change request by updating the tenant + login user."""
+    tenant = db.get(Tenant, req.tenant_id) if req.tenant_id else None
+    if tenant is None:
+        _422("Phone change request has no linked tenant")
+    new_phone = req.requested_phone
+    if not new_phone:
+        _422("Phone change request has no new number")
+
+    user = db.execute(select(User).where(User.phone == tenant.phone)).scalar_one_or_none()
+    if user is None:
+        user = ensure_login_user(
+            db, tenant.phone, None, req.organization_id, Role.tenant, name=tenant.full_name
+        )
+
+    conflict_user = db.execute(
+        select(User).where(User.phone == new_phone, User.id != user.id)
+    ).scalar_one_or_none()
+    if conflict_user:
+        raise HTTPException(status.HTTP_409_CONFLICT, "This phone number is already registered")
+    conflict_tenant = db.execute(
+        select(Tenant).where(
+            Tenant.organization_id == req.organization_id,
+            Tenant.phone == new_phone,
+            Tenant.id != tenant.id,
+        )
+    ).scalar_one_or_none()
+    if conflict_tenant:
+        raise HTTPException(status.HTTP_409_CONFLICT, "This phone number is already registered")
+
+    tenant.phone = new_phone
+    user.phone = new_phone
+    req.status = RequestStatus.completed
+    req.decided_by_user_id = auth.user.id
+    req.decided_at = datetime.now(timezone.utc)
+    db.commit()
+
+    notify_user(
+        db,
+        user.id,
+        "Phone number updated",
+        f"Your login mobile number is now {new_phone}.",
+        request_id=req.id,
+    )
+    db.commit()
 
 
 # ---------- tenant side ----------
@@ -132,6 +188,83 @@ def my_change_requests(auth: AuthContext = Depends(get_auth_context), db: Sessio
     reqs = db.execute(
         select(ChangeRequest)
         .where(ChangeRequest.tenant_id == tenant.id, ChangeRequest.kind == RequestKind.change)
+        .order_by(ChangeRequest.created_at.desc())
+    ).scalars().all()
+    return [_out(db, r) for r in reqs]
+
+
+@router.post("/my/phone-change-requests", response_model=RequestOut, status_code=201)
+def create_phone_change_request(
+    body: PhoneChangeRequestIn,
+    auth: AuthContext = Depends(get_auth_context),
+    db: Session = Depends(get_db),
+):
+    """Tenant asks their manager to update the mobile number used for login."""
+    if not auth.org_id:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "No active organization")
+    tenant = _current_tenant(db, auth.org_id, auth)
+    new_phone = body.new_phone
+
+    if new_phone == tenant.phone:
+        _422("New number is the same as your current number")
+    if db.execute(select(User).where(User.phone == new_phone)).scalar_one_or_none():
+        raise HTTPException(status.HTTP_409_CONFLICT, "This phone number is already registered")
+    existing_tenant = db.execute(
+        select(Tenant).where(
+            Tenant.organization_id == auth.org_id,
+            Tenant.phone == new_phone,
+            Tenant.id != tenant.id,
+        )
+    ).scalar_one_or_none()
+    if existing_tenant:
+        raise HTTPException(status.HTTP_409_CONFLICT, "This phone number is already registered")
+
+    pending = db.execute(
+        select(ChangeRequest).where(
+            ChangeRequest.tenant_id == tenant.id,
+            ChangeRequest.kind == RequestKind.phone_change,
+            ChangeRequest.status == RequestStatus.open,
+        )
+    ).scalars().first()
+    if pending:
+        raise HTTPException(status.HTTP_409_CONFLICT, "You already have a phone change request pending")
+
+    req = ChangeRequest(
+        organization_id=auth.org_id,
+        kind=RequestKind.phone_change,
+        tenant_id=tenant.id,
+        requested_phone=new_phone,
+        note=body.note,
+    )
+    db.add(req)
+    db.commit()
+    db.refresh(req)
+    notify_staff(
+        db,
+        auth.org_id,
+        "New phone change request",
+        f"{tenant.full_name} wants to change their mobile from {tenant.phone} to {new_phone}.",
+        request_id=req.id,
+        tenant_id=tenant.id,
+    )
+    db.commit()
+    return _out(db, req)
+
+
+@router.get("/my/phone-change-requests", response_model=list[RequestOut])
+def my_phone_change_requests(
+    auth: AuthContext = Depends(get_auth_context),
+    db: Session = Depends(get_db),
+):
+    if not auth.org_id:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "No active organization")
+    tenant = _current_tenant(db, auth.org_id, auth)
+    reqs = db.execute(
+        select(ChangeRequest)
+        .where(
+            ChangeRequest.tenant_id == tenant.id,
+            ChangeRequest.kind == RequestKind.phone_change,
+        )
         .order_by(ChangeRequest.created_at.desc())
     ).scalars().all()
     return [_out(db, r) for r in reqs]
@@ -202,6 +335,30 @@ def decide_request(
     if req.status != RequestStatus.open:
         raise HTTPException(status.HTTP_409_CONFLICT, "Request already decided")
 
+    if req.kind == RequestKind.phone_change:
+        if body.status == RequestStatus.rejected:
+            req.status = RequestStatus.rejected
+            req.decided_by_user_id = auth.user.id
+            req.decided_at = datetime.now(timezone.utc)
+            db.commit()
+            if req.tenant_id:
+                tenant = db.get(Tenant, req.tenant_id)
+                if tenant:
+                    user = ensure_login_user(db, tenant.phone, None, auth.org_id, Role.tenant)
+                    notify_user(
+                        db,
+                        user.id,
+                        "Phone change rejected",
+                        "Your mobile number change request was declined.",
+                        request_id=req.id,
+                    )
+                    db.commit()
+        elif body.status == RequestStatus.approved:
+            _apply_phone_change(db, req, auth)
+        else:
+            _422("Phone change requests can only be approved or rejected")
+        return _out(db, req)
+
     req.status = RequestStatus(body.status)
     req.decided_by_user_id = auth.user.id
     req.decided_at = datetime.now(timezone.utc)
@@ -265,10 +422,13 @@ def staff_apply_move(
         raise HTTPException(status.HTTP_409_CONFLICT, "Target bed is currently occupied")
 
     # Update stay to new bed
+    old_bed_id = current_stay.bed_id
     current_stay.bed_id = target_bed.id
     current_stay.agreed_rent_paise = target_bed.rent_paise
     req.status = RequestStatus.completed
     req.bed_id = target_bed.id
+    _sync_map_for_stay(db, auth.org_id, old_bed_id, None)
+    _sync_map_for_stay(db, auth.org_id, target_bed.id, tenant.id)
     db.commit()
 
     # Sync tenant participation

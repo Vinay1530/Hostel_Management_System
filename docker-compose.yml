@@ -17,7 +17,8 @@ services:
 
   backend:
     build: ./backend
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    # entrypoint.sh waits for the DB, applies alembic migrations, then starts uvicorn
+    command: []
     environment:
       DATABASE_URL: postgresql+psycopg://pgms:pgms_dev@postgres:5432/pgms
       REDIS_URL: redis://redis:6379/0

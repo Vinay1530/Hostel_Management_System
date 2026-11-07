@@ -504,9 +504,42 @@ def list_conversations(
         )
         .where(
             ConversationParticipant.user_id == auth.user.id,
-            Conversation.property_id.in_([prop.id for prop in properties]),
+            or_(
+                Conversation.property_id.in_([prop.id for prop in properties]),
+                and_(
+                    Conversation.property_id.is_(None),
+                    Conversation.type == ConversationType.announcement,
+                ),
+            ),
+            # Hide legacy per-property announcement chats (pre org-wide ones).
+            or_(
+                Conversation.type != ConversationType.announcement,
+                Conversation.property_id.is_(None),
+            ),
         )
-    ).scalars().all() if properties else []
+    ).scalars().all()
+
+    if auth.role != Role.tenant:
+        # Staff only see direct chats once at least one message exists
+        # (admin-initiated contact; they can still open a tenant profile to start one).
+        empty_direct_ids = {
+            row[0]
+            for row in db.execute(
+                select(Conversation.id)
+                .outerjoin(ChatMessage, ChatMessage.conversation_id == Conversation.id)
+                .where(
+                    Conversation.property_id.in_([prop.id for prop in properties]),
+                    Conversation.type == ConversationType.direct,
+                )
+                .group_by(Conversation.id)
+                .having(func.count(ChatMessage.id) == 0)
+            ).all()
+        }
+        if empty_direct_ids:
+            conversation_rows = [
+                conversation for conversation in conversation_rows
+                if conversation.id not in empty_direct_ids
+            ]
 
     result: list[ConversationOut] = []
     for conversation in conversation_rows:
@@ -533,12 +566,13 @@ def list_conversations(
                 )
             ).scalar_one_or_none()
         other_user = db.get(User, other_user_id) if other_user_id else None
-        prop = db.get(Property, conversation.property_id)
-        channel_title = {
-            ConversationType.announcement: "Announcements",
-            ConversationType.group: "Group chat",
-            ConversationType.direct: other_user.name or other_user.phone if other_user else "Personal chat",
-        }[conversation.type]
+        prop = db.get(Property, conversation.property_id) if conversation.property_id else None
+        if conversation.type == ConversationType.announcement:
+            channel_title = "Announcements"
+        elif conversation.type == ConversationType.group:
+            channel_title = f"{prop.name} chat" if prop else "Chat"
+        else:
+            channel_title = other_user.name or other_user.phone if other_user else "Personal chat"
         result.append(
             ConversationOut(
                 id=conversation.id,
@@ -577,36 +611,39 @@ def list_conversations(
                     user_id=user.id,
                     name=user.name or user.phone,
                     role=role,
+                    phone=user.phone,
                     room_number=None,
                     property_id=prop.id,
                     property_name=prop.name,
                 )
             )
-        tenant_rows = db.execute(
-            select(User, Tenant.full_name, Room.number)
-            .join(Tenant, Tenant.phone == User.phone)
-            .join(Stay, Stay.tenant_id == Tenant.id)
-            .join(Bed, Bed.id == Stay.bed_id)
-            .join(Room, Room.id == Bed.room_id)
-            .join(Floor, Floor.id == Room.floor_id)
-            .where(
-                Tenant.organization_id == auth.org_id,
-                Floor.property_id == prop.id,
-                Stay.active.is_(True),
-                User.id != auth.user.id,
-            )
-        ).all()
-        for user, full_name, room_number in tenant_rows:
-            contacts.append(
-                ConversationContactOut(
-                    user_id=user.id,
-                    name=full_name,
-                    role=Role.tenant,
-                    room_number=room_number,
-                    property_id=prop.id,
-                    property_name=prop.name,
+        if auth.role != Role.tenant:
+            tenant_rows = db.execute(
+                select(User, Tenant.full_name, User.phone, Room.number)
+                .join(Tenant, Tenant.phone == User.phone)
+                .join(Stay, Stay.tenant_id == Tenant.id)
+                .join(Bed, Bed.id == Stay.bed_id)
+                .join(Room, Room.id == Bed.room_id)
+                .join(Floor, Floor.id == Room.floor_id)
+                .where(
+                    Tenant.organization_id == auth.org_id,
+                    Floor.property_id == prop.id,
+                    Stay.active.is_(True),
+                    User.id != auth.user.id,
                 )
-            )
+            ).all()
+            for user, full_name, phone, room_number in tenant_rows:
+                contacts.append(
+                    ConversationContactOut(
+                        user_id=user.id,
+                        name=full_name,
+                        role=Role.tenant,
+                        phone=phone,
+                        room_number=room_number,
+                        property_id=prop.id,
+                        property_name=prop.name,
+                    )
+                )
     return ConversationsOut(conversations=result, contacts=contacts)
 
 

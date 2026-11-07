@@ -26,13 +26,13 @@ export function useNotifications() {
   async function markRead(id: string) {
     if (!token) return;
     try {
-      await api.patch(`${path.endsWith("/staff/notifications") ? "/staff/notifications" : "/my/notifications"}/${id}/read`);
+      const key = path.endsWith("/staff/notifications") ? "/staff/notifications" : "/my/notifications";
+      await api.patch(`${key}/${id}/read`);
     } catch {
       return;
     }
-    setItems((prev) =>
-      prev.map((n) => (n.id === id && !n.read_at ? { ...n, read_at: new Date().toISOString() } : n))
-    );
+    // After marking as read, remove it from display — it should be deleted from the section
+    setItems((prev) => prev.filter((n) => n.id !== id));
   }
 
   return { items, unread, refresh, markRead };
