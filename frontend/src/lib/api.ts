@@ -39,6 +39,15 @@ export const TOKEN_KEY = "pgms_token";
 
 let token: string | null = null;
 
+function formatErrorDetail(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (value && typeof value === "object" && "detail" in value) {
+    return formatErrorDetail(value.detail);
+  }
+  if (value == null) return "Request failed";
+  return JSON.stringify(value) ?? String(value);
+}
+
 export async function initToken(): Promise<string | null> {
   if (!token) {
     token = (await getStorageItem(TOKEN_KEY)) ?? null;
@@ -58,11 +67,14 @@ export async function clearToken() {
 
 export class ApiError extends Error {
   status: number;
-  detail: unknown;
+  detail: string;
+  response: unknown;
   constructor(status: number, detail: unknown) {
-    super(typeof detail === "string" ? detail : JSON.stringify(detail));
+    const message = formatErrorDetail(detail);
+    super(message);
     this.status = status;
-    this.detail = detail;
+    this.detail = message;
+    this.response = detail;
   }
 }
 

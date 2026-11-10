@@ -35,9 +35,6 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["property_id"], ["properties.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
     )
-    op.create_index("ix_tenant_feedbacks_tenant_id", "tenant_feedbacks", ["tenant_id"])
-    op.create_index("ix_tenant_feedbacks_property_id", "tenant_feedbacks", ["property_id"])
-
     # security_deposits table
     op.create_table(
         "security_deposits",
@@ -57,9 +54,6 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["held_by_user_id"], ["users.id"], ondelete="SET NULL"),
         sa.PrimaryKeyConstraint("id"),
     )
-    op.create_index("ix_security_deposits_stay_id", "security_deposits", ["stay_id"])
-    op.create_index("ix_security_deposits_status", "security_deposits", ["status"])
-
     # payment_reminders table
     op.create_table(
         "payment_reminders",
@@ -76,9 +70,6 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["invoice_id"], ["rent_invoices.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
     )
-    op.create_index("ix_payment_reminders_invoice_id", "payment_reminders", ["invoice_id"])
-    op.create_index("ix_payment_reminders_status", "payment_reminders", ["status"])
-
     # invoice_templates table
     op.create_table(
         "invoice_templates",
