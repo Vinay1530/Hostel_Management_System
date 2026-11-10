@@ -2,20 +2,23 @@ import { api, WS_HOST } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { design, getShadow } from "@/lib/design";
 import { roleAccents } from "@/lib/theme";
-import { Sheet } from "@/components/ui";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { GestureResponderEvent } from "react-native";
 import {
   ActivityIndicator,
   FlatList,
   KeyboardAvoidingView,
+  Modal,
   Platform,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
+  useWindowDimensions,
   View,
 } from "react-native";
 import { AppText, Skeleton } from "@/components/ui-components";
@@ -59,6 +62,37 @@ type Message = {
 
 const EDIT_WINDOW_MS = 60 * 60 * 1000;
 const REACTION_EMOJIS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
+
+const DELIVERY_RANK: Record<Message["delivery_status"], number> = {
+  sent: 0,
+  delivered: 1,
+  read: 2,
+};
+
+/**
+ * Merge a server copy of a message into the one already on screen. Editing or
+ * reacting must never take the ticks backwards (read → delivered → sent).
+ */
+function mergeMessageUpdate(previous: Message, update: Message): Message {
+  const previousRank = DELIVERY_RANK[previous.delivery_status] ?? 0;
+  const updateRank = DELIVERY_RANK[update.delivery_status] ?? 0;
+  const delivery_status =
+    updateRank < previousRank ? previous.delivery_status : update.delivery_status;
+  return {
+    ...previous,
+    ...update,
+    delivery_status,
+    reactions: update.reactions ?? previous.reactions,
+  };
+}
+
+type MessageMenu = {
+  message: Message;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
 
 function parseDate(value: string): Date {
   return new Date(
@@ -153,6 +187,7 @@ export default function ChatPage() {
 export function ChatScreen() {
   const { token, role } = useAuth();
   const router = useRouter();
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const accent = role === "tenant" ? roleAccents.tenant : roleAccents.manager;
 
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -162,13 +197,15 @@ export function ChatScreen() {
   const [myUserId, setMyUserId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [editing, setEditing] = useState<Message | null>(null);
-  const [actionMessage, setActionMessage] = useState<Message | null>(null);
+  const [messageMenu, setMessageMenu] = useState<MessageMenu | null>(null);
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
   const listRef = useRef<FlatList<Message>>(null);
   const inputRef = useRef<TextInput>(null);
+  const actionsOpenedAtRef = useRef(0);
+  const bubbleRefs = useRef<Record<string, View | null>>({});
   const isTenant = role === "tenant";
   const params = useLocalSearchParams<{
     tenantUserId?: string | string[];
@@ -232,7 +269,17 @@ export function ChatScreen() {
       const page = await api.get<{ messages: Message[]; next_cursor: string | null }>(
         `/conversations/${selectedId}/messages`
       );
-      setMessages(page.messages);
+      setMessages((current) => {
+        // Ignore a response that arrived after switching to another thread.
+        if (current.length > 0 && current[0].conversation_id !== selectedId) {
+          return current;
+        }
+        const previousById = new Map(current.map((item) => [item.id, item]));
+        return page.messages.map((message) => {
+          const previous = previousById.get(message.id);
+          return previous ? mergeMessageUpdate(previous, message) : message;
+        });
+      });
       setConversations((current) => current.map((item) =>
         item.id === selectedId ? { ...item, unread_count: 0 } : item
       ));
@@ -245,7 +292,7 @@ export function ChatScreen() {
   useEffect(() => {
     setMessages([]);
     setEditing(null);
-    setActionMessage(null);
+    setMessageMenu(null);
     setDraft("");
     if (selectedId) loadMessages(true);
   }, [loadMessages, selectedId]);
@@ -287,7 +334,9 @@ export function ChatScreen() {
       if (data?.type === "message_updated" && data.message) {
         const updated = data.message as Message;
         setMessages((current) =>
-          current.map((message) => (message.id === updated.id ? updated : message))
+          current.map((message) =>
+            message.id === updated.id ? mergeMessageUpdate(message, updated) : message
+          )
         );
         return;
       }
@@ -363,7 +412,9 @@ export function ChatScreen() {
           { body }
         );
         setMessages((current) =>
-          current.map((item) => (item.id === updated.id ? updated : item))
+          current.map((item) =>
+            item.id === updated.id ? mergeMessageUpdate(item, updated) : item
+          )
         );
         setEditing(null);
         setDraft("");
@@ -391,8 +442,30 @@ export function ChatScreen() {
     setDraft("");
   }
 
+  function openMessageActions(message: Message, event?: GestureResponderEvent) {
+    actionsOpenedAtRef.current = Date.now();
+    const pageX = event?.nativeEvent?.pageX ?? 0;
+    const pageY = event?.nativeEvent?.pageY ?? 0;
+    // Show immediately at the finger, then refine with the bubble's real bounds.
+    setMessageMenu({ message, x: pageX - 10, y: pageY - 30, width: 20, height: 40 });
+    bubbleRefs.current[message.id]?.measureInWindow((x, y, width, height) => {
+      if (width <= 0 || height <= 0) return;
+      setMessageMenu((current) =>
+        current && current.message.id === message.id
+          ? { message, x, y, width, height }
+          : current
+      );
+    });
+  }
+
+  function closeMessageActions() {
+    // Ignore the backdrop click produced by the same long-press release.
+    if (Date.now() - actionsOpenedAtRef.current < 400) return;
+    setMessageMenu(null);
+  }
+
   function startEdit(message: Message) {
-    setActionMessage(null);
+    setMessageMenu(null);
     setEditing(message);
     setDraft(message.body);
     setTimeout(() => inputRef.current?.focus(), 80);
@@ -402,7 +475,7 @@ export function ChatScreen() {
     if (!selected) return;
     const mine = message.reactions.find((reaction) => reaction.user_id === myUserId);
     try {
-      setActionMessage(null);
+      setMessageMenu(null);
       const updated =
         mine?.emoji === emoji
           ? await api.delete<Message>(
@@ -413,7 +486,9 @@ export function ChatScreen() {
               { emoji }
             );
       setMessages((current) =>
-        current.map((item) => (item.id === updated.id ? updated : item))
+        current.map((item) =>
+          item.id === updated.id ? mergeMessageUpdate(item, updated) : item
+        )
       );
     } catch (e: any) {
       setError(e?.message ?? "Could not update your reaction");
@@ -653,17 +728,22 @@ export function ChatScreen() {
                 </View>
               ) : null}
               <View style={[styles.messageRow, mine && styles.messageRowMine]}>
-                <TouchableOpacity
-                  activeOpacity={0.9}
-                  delayLongPress={2000}
-                  onLongPress={() => setActionMessage(item)}
-                  style={[
+                <Pressable
+                  ref={(node) => {
+                    bubbleRefs.current[item.id] = node;
+                  }}
+                  delayLongPress={500}
+                  pressRetentionOffset={16}
+                  onLongPress={(event) => openMessageActions(item, event)}
+                  accessibilityHint="Long press for reactions and edit"
+                  style={({ pressed }) => [
                     styles.messageBubble,
                     mine && styles.messageBubbleMine,
                     mine && {
                       backgroundColor: accent.accentSoft,
                       borderColor: `${accent.accent}40`,
                     },
+                    pressed && { opacity: 0.85 },
                   ]}
                 >
                   {!mine ? (
@@ -700,7 +780,7 @@ export function ChatScreen() {
                     <Text style={styles.time}>{timeOnly(item.created_at)}</Text>
                     {mine ? <DeliveryTicks status={item.delivery_status} /> : null}
                   </View>
-                </TouchableOpacity>
+                </Pressable>
               </View>
             </View>
           );
@@ -770,78 +850,95 @@ export function ChatScreen() {
         </View>
       )}
 
-      <Sheet visible={!!actionMessage} onClose={() => setActionMessage(null)}>
-        {actionMessage ? (
-          <>
-            <Text style={styles.actionTitle}>Message options</Text>
-            <Text style={styles.actionPreview} numberOfLines={2}>
-              {actionMessage.body}
-            </Text>
-            <Text style={styles.actionLabel}>REACT WITH</Text>
-            <View style={styles.emojiRow}>
-              {REACTION_EMOJIS.map((emoji) => {
-                const active = actionMessage.reactions.some(
-                  (reaction) =>
-                    reaction.user_id === myUserId && reaction.emoji === emoji
+      <Modal
+        visible={!!messageMenu}
+        transparent
+        animationType="fade"
+        onRequestClose={closeMessageActions}
+      >
+        <Pressable style={styles.menuBackdrop} onPress={closeMessageActions}>
+          {messageMenu
+            ? (() => {
+                const { message, x, y, width, height } = messageMenu;
+                const isMine = message.sender_id === myUserId;
+                const editable = isMine && canEditMessage(message, myUserId);
+                const cardWidth = Math.min(312, windowWidth - 24);
+                // Rough card height, only used to anchor it above the bubble.
+                const cardHeight = isMine ? 112 : 62;
+                let top = y - cardHeight - 12;
+                if (top < 16) top = y + height + 12;
+                top = Math.max(16, Math.min(top, windowHeight - cardHeight - 16));
+                const left = Math.max(
+                  12,
+                  Math.min(
+                    x + width / 2 - cardWidth / 2,
+                    windowWidth - cardWidth - 12
+                  )
                 );
                 return (
-                  <TouchableOpacity
-                    key={emoji}
-                    style={[
-                      styles.emojiButton,
-                      active && {
-                        borderColor: accent.accent,
-                        backgroundColor: accent.accentSoft,
-                      },
-                    ]}
-                    onPress={() => reactTo(actionMessage, emoji)}
-                    activeOpacity={0.85}
+                  <Pressable
+                    style={[styles.menuCard, { top, left, width: cardWidth }]}
+                    onPress={(event) => event.stopPropagation()}
                   >
-                    <Text style={styles.emojiText}>{emoji}</Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
+                    <View style={styles.menuEmojiRow}>
+                      {REACTION_EMOJIS.map((emoji) => {
+                        const active = message.reactions.some(
+                          (reaction) =>
+                            reaction.user_id === myUserId && reaction.emoji === emoji
+                        );
+                        return (
+                          <TouchableOpacity
+                            key={emoji}
+                            style={[
+                              styles.menuEmojiButton,
+                              active && {
+                                borderColor: accent.accent,
+                                backgroundColor: accent.accentSoft,
+                              },
+                            ]}
+                            onPress={() => reactTo(message, emoji)}
+                            activeOpacity={0.8}
+                            accessibilityRole="button"
+                            accessibilityLabel={`React with ${emoji}`}
+                          >
+                            <Text style={styles.menuEmojiText}>{emoji}</Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
 
-            {actionMessage.sender_id === myUserId ? (
-              canEditMessage(actionMessage, myUserId) ? (
-                <TouchableOpacity
-                  style={styles.sheetAction}
-                  onPress={() => startEdit(actionMessage)}
-                  activeOpacity={0.85}
-                >
-                  <View
-                    style={[
-                      styles.sheetActionIcon,
-                      { backgroundColor: accent.accentSoft },
-                    ]}
-                  >
-                    <Ionicons name="create-outline" size={17} color={accent.accent} />
-                  </View>
-                  <View style={{ flex: 1, minWidth: 0 }}>
-                    <Text style={styles.sheetActionTitle}>Edit message</Text>
-                    <Text style={styles.sheetActionSub}>
-                      Available for 1 hour after sending
-                    </Text>
-                  </View>
-                </TouchableOpacity>
-              ) : (
-                <View style={styles.editExpired}>
-                  <Ionicons
-                    name="time-outline"
-                    size={15}
-                    color={design.colors.textMuted}
-                  />
-                  <Text style={styles.editExpiredText}>
-                    Editing is closed — messages can only be edited within 1 hour
-                    of sending.
-                  </Text>
-                </View>
-              )
-            ) : null}
-          </>
-        ) : null}
-      </Sheet>
+                    {isMine ? <View style={styles.menuDivider} /> : null}
+
+                    {editable ? (
+                      <TouchableOpacity
+                        style={styles.menuAction}
+                        onPress={() => startEdit(message)}
+                        activeOpacity={0.85}
+                        accessibilityRole="button"
+                        accessibilityLabel="Edit message"
+                      >
+                        <Ionicons name="create-outline" size={17} color={accent.accent} />
+                        <Text style={styles.menuActionText}>Edit message</Text>
+                        <Text style={styles.menuActionHint}>1h</Text>
+                      </TouchableOpacity>
+                    ) : isMine ? (
+                      <View style={styles.menuHint}>
+                        <Ionicons
+                          name="time-outline"
+                          size={14}
+                          color={design.colors.textMuted}
+                        />
+                        <Text style={styles.menuHintText}>
+                          Editing closes 1 hour after sending
+                        </Text>
+                      </View>
+                    ) : null}
+                  </Pressable>
+                );
+              })()
+            : null}
+        </Pressable>
+      </Modal>
     </KeyboardAvoidingView>
   );
 }
@@ -1219,80 +1316,77 @@ const styles = StyleSheet.create({
     color: design.colors.textSecondary,
     marginTop: 1,
   },
-  actionTitle: {
-    fontSize: 16,
-    fontWeight: "800",
-    color: design.colors.textPrimary,
+  menuBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(15, 23, 42, 0.08)",
+  },
+  menuCard: {
+    position: "absolute",
+    backgroundColor: "#fff",
+    borderRadius: 16,
+    paddingVertical: 7,
+    paddingHorizontal: 7,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: design.colors.border,
+    shadowColor: "#0F172A",
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.18,
+    shadowRadius: 24,
+    elevation: 12,
+  },
+  menuEmojiRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 2,
+  },
+  menuEmojiButton: {
+    flex: 1,
+    height: 40,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "transparent",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  menuEmojiText: { fontSize: 22 },
+  menuDivider: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: design.colors.border,
+    marginTop: 6,
     marginBottom: 4,
   },
-  actionPreview: {
-    fontSize: 12,
-    color: design.colors.textSecondary,
-    lineHeight: 18,
-    marginBottom: 12,
-  },
-  actionLabel: {
-    fontSize: 9,
-    fontWeight: "800",
-    letterSpacing: 0.9,
-    color: design.colors.textMuted,
-    marginBottom: 8,
-  },
-  emojiRow: {
+  menuAction: {
     flexDirection: "row",
-    justifyContent: "space-between",
-    gap: 6,
-    marginBottom: 14,
+    alignItems: "center",
+    gap: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 6,
+    borderRadius: 10,
   },
-  emojiButton: {
+  menuActionText: {
     flex: 1,
-    height: 46,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: design.colors.border,
-    backgroundColor: design.colors.background,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  emojiText: { fontSize: 23 },
-  sheetAction: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    paddingVertical: 10,
-    borderTopWidth: 1,
-    borderTopColor: design.colors.border,
-  },
-  sheetActionIcon: {
-    width: 34,
-    height: 34,
-    borderRadius: 11,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  sheetActionTitle: {
     fontSize: 14,
-    fontWeight: "800",
+    fontWeight: "700",
     color: design.colors.textPrimary,
   },
-  sheetActionSub: {
-    fontSize: 11,
+  menuActionHint: {
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 0.4,
     color: design.colors.textMuted,
-    marginTop: 1,
   },
-  editExpired: {
+  menuHint: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 7,
-    paddingTop: 10,
-    borderTopWidth: 1,
-    borderTopColor: design.colors.border,
+    gap: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 6,
   },
-  editExpiredText: {
+  menuHintText: {
     flex: 1,
     fontSize: 11,
     color: design.colors.textMuted,
-    lineHeight: 16,
+    lineHeight: 15,
   },
   messageInput: {
     flex: 1,

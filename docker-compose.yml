@@ -2,9 +2,9 @@ services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: pgms
-      POSTGRES_PASSWORD: pgms_dev
-      POSTGRES_DB: pgms
+      POSTGRES_USER: ${POSTGRES_USER:-pgms}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pgms_dev}
+      POSTGRES_DB: ${POSTGRES_DB:-pgms}
     ports:
       - "5433:5432"
     volumes:
@@ -20,11 +20,13 @@ services:
     # entrypoint.sh waits for the DB, applies alembic migrations, then starts uvicorn
     command: []
     environment:
-      DATABASE_URL: postgresql+psycopg://pgms:pgms_dev@postgres:5432/pgms
-      REDIS_URL: redis://redis:6379/0
-      JWT_SECRET: dev-secret-change-me
-      OTP_DEV_MODE: "true"
-      UPLOAD_DIR: /data/uploads
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-pgms}:${POSTGRES_PASSWORD:-pgms_dev}@postgres:5432/${POSTGRES_DB:-pgms}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      JWT_SECRET: ${JWT_SECRET:-dev-secret-change-me}
+      OTP_DEV_MODE: ${OTP_DEV_MODE:-true}
+      DEFAULT_TENANT_PASSWORD: ${DEFAULT_TENANT_PASSWORD:-password}
+      CORS_ORIGINS: ${CORS_ORIGINS:-["*"]}
+      UPLOAD_DIR: ${UPLOAD_DIR:-/data/uploads}
     ports:
       - "8000:8000"
     volumes:
@@ -62,11 +64,13 @@ services:
     build: ./backend
     command: celery -A app.workers.celery_app:celery worker --loglevel=info --beat
     environment:
-      DATABASE_URL: postgresql+psycopg://pgms:pgms_dev@postgres:5432/pgms
-      REDIS_URL: redis://redis:6379/0
-      JWT_SECRET: dev-secret-change-me
-      OTP_DEV_MODE: "true"
-      UPLOAD_DIR: /data/uploads
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-pgms}:${POSTGRES_PASSWORD:-pgms_dev}@postgres:5432/${POSTGRES_DB:-pgms}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      JWT_SECRET: ${JWT_SECRET:-dev-secret-change-me}
+      OTP_DEV_MODE: ${OTP_DEV_MODE:-true}
+      DEFAULT_TENANT_PASSWORD: ${DEFAULT_TENANT_PASSWORD:-password}
+      CORS_ORIGINS: ${CORS_ORIGINS:-["*"]}
+      UPLOAD_DIR: ${UPLOAD_DIR:-/data/uploads}
     volumes:
       - ./uploads:/data/uploads
     depends_on:

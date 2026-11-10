@@ -62,7 +62,7 @@ def register(body: RegisterIn, db: Session = Depends(get_db)):
 
 @router.post("/login", response_model=AuthOut)
 def login(body: LoginIn, db: Session = Depends(get_db)):
-    """Phone + password login (default password for tenants created by the manager: 'password')."""
+    """Phone + password login (tenants get the configured default password)."""
     user = db.execute(select(User).where(User.phone == body.phone)).scalar_one_or_none()
     if not user or not verify_password(body.password, user.password_hash):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Wrong phone number or password")

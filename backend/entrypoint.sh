@@ -4,13 +4,14 @@ set -e
 # Wait until the database accepts connections (compose healthcheck helps, but
 # this keeps standalone `docker run` safe too).
 python - <<'PY'
-import os, time
+import os
+import time
 import psycopg
 
-url = os.environ.get(
-    "DATABASE_URL",
-    "postgresql+psycopg://pgms:pgms_dev@postgres:5432/pgms",
-).replace("+psycopg", "")
+url = os.environ.get("DATABASE_URL")
+if not url:
+    raise SystemExit("DATABASE_URL is required (copy .env.example to .env)")
+url = url.replace("+psycopg", "")
 for i in range(60):
     try:
         psycopg.connect(url).close()

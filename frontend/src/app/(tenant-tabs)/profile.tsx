@@ -163,8 +163,11 @@ export default function TenantProfile() {
           setSigningOut(true);
           try {
             await logout();
+          } catch {
+            // Leave the session screen even if secure storage failed.
           } finally {
             setSigningOut(false);
+            router.replace("/login");
           }
         },
       },

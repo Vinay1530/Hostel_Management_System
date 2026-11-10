@@ -33,6 +33,10 @@ Start the backend and PostgreSQL before launching the app. The frontend uses the
 FastAPI backend for all authentication and data; there is no offline/demo data mode.
 
 ```bash
+# first run: create local secrets/config (never committed)
+cp .env.example .env
+cp frontend/.env.example frontend/.env   # set EXPO_PUBLIC_API_URL to your LAN IP
+
 docker compose up -d
 # first run: apply migrations (skip if already applied)
 docker compose run --rm backend alembic upgrade head
@@ -42,6 +46,30 @@ npx expo start
 # scan the QR with Expo Go · web fallback: press w
 # API docs: http://localhost:8000/docs
 ```
+
+## Configuration (environment variables)
+
+Secrets and machine-specific values live in git-ignored `.env` files; the
+committed `.env.example` files document every variable.
+
+| File | Used by | Key variables |
+| --- | --- | --- |
+| `.env` | docker compose + backend | `POSTGRES_*`, `JWT_SECRET`, `OTP_DEV_MODE`, `DEFAULT_TENANT_PASSWORD`, `CORS_ORIGINS` |
+| `frontend/.env` | Expo app | `EXPO_PUBLIC_API_URL` |
+
+Notes:
+
+- `JWT_SECRET` and `POSTGRES_PASSWORD` must be changed for any deployment.
+  Changing `POSTGRES_PASSWORD` on an existing volume also requires updating the
+  role in Postgres (`ALTER ROLE ... PASSWORD ...`).
+- Set `OTP_DEV_MODE=false` in production so OTP codes are not returned by the API.
+- `CORS_ORIGINS` is a JSON array of browser origins; native apps are not
+  CORS-restricted.
+- `EXPO_PUBLIC_*` values are inlined when Expo starts or builds. Restart Expo
+  (`npx expo start -c`) after changing `frontend/.env`, and set the same variable
+  in your EAS/build environment for production builds.
+- Without `frontend/.env`, dev falls back to the Metro host IP for native apps
+  and the current browser host for web.
 
 Dev OTP mode is enabled by default (`OTP_DEV_MODE=true`): the OTP code is returned in
 the API response (and shown on the login screen) instead of being sent by SMS.
@@ -56,13 +84,13 @@ docker compose --profile tunnel up -d
 docker compose logs -f backend-tunnel
 ```
 
-Wait for the `trycloudflare.com` URL in the tunnel logs. In a second terminal,
-set the Expo API URL to that HTTPS address before starting Expo:
+Wait for the `trycloudflare.com` URL in the tunnel logs, then put that HTTPS
+address in `frontend/.env` and restart Expo:
 
-```powershell
+```bash
 cd frontend
-$env:EXPO_PUBLIC_API_URL = "https://<generated-name>.trycloudflare.com"
-npx expo start --tunnel
+# EXPO_PUBLIC_API_URL=https://<generated-name>.trycloudflare.com
+npx expo start --tunnel -c
 ```
 
 Share the Expo QR/link with your teammate. They need both the Expo app link and
@@ -103,7 +131,7 @@ docker compose --profile jobs up -d   # enables redis + worker with the beat sch
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r backend/requirements.txt -r backend/requirements-dev.txt
-# needs a local Postgres; see DATABASE_URL in backend/app/core/config.py
+# needs a local Postgres; copy .env.example to .env and adjust DATABASE_URL
 cd backend && alembic upgrade head && uvicorn app.main:app --reload
 ```
 

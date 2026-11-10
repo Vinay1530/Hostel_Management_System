@@ -10,4 +10,6 @@ uploads/*
 *.db
 *.sqlite3
 .env
+.env.local
+.env.*.local
 docs/status.md.bak

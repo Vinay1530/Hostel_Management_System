@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -69,6 +70,7 @@ from app.services.collaboration import (
 from app.services.notify import notify_staff
 
 router = APIRouter(tags=["complaints", "chat"])
+logger = logging.getLogger(__name__)
 
 MAX_PHOTO_BYTES = 5 * 1024 * 1024
 MAX_PHOTOS = 3
@@ -459,6 +461,26 @@ def _delivery_status(db: Session, message: ChatMessage) -> str:
     return "sent"
 
 
+_DELIVERY_RANK = {"sent": 0, "delivered": 1, "read": 2}
+
+
+def _receipt_status(db: Session, message: ChatMessage) -> str:
+    """Receipt state is a high-water mark.
+
+    Compute what the participant stamps say right now, then keep the highest
+    value ever stored on the message. That way editing, editing reactions or a
+    participant joining later can never push the ticks backwards.
+    """
+    stored = message.delivery_status or "sent"
+    computed = _delivery_status(db, message)
+    if _DELIVERY_RANK[computed] > _DELIVERY_RANK[stored]:
+        message.delivery_status = computed
+        # Persist immediately: callers may only read (GET) and never commit.
+        db.commit()
+        return computed
+    return stored
+
+
 def _message_reactions(db: Session, message: ChatMessage) -> list[MessageReactionOut]:
     rows = db.execute(
         select(MessageReaction)
@@ -488,7 +510,7 @@ def _message_out(db: Session, message: ChatMessage) -> MessageOut:
         body=message.body,
         created_at=message.created_at,
         edited_at=message.edited_at,
-        delivery_status=_delivery_status(db, message),
+        delivery_status=_receipt_status(db, message),
         reactions=_message_reactions(db, message),
     )
 
@@ -899,6 +921,12 @@ async def edit_message(
     db.refresh(message)
 
     out = _message_out(db, message)
+    logger.debug(
+        "edited message %s delivery_status=%s created_at=%s",
+        message.id,
+        out.delivery_status,
+        message.created_at,
+    )
     await chat_connections.broadcast(
         conversation.id, {"type": "message_updated", "message": out.model_dump(mode="json")}
     )

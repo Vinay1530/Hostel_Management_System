@@ -8,21 +8,20 @@ import {
 
 /**
  * Resolve the backend URL:
- * 1. EXPO_PUBLIC_API_URL env var (set when starting expo) wins
+ * 1. EXPO_PUBLIC_API_URL env var (`.env` in dev, build env in production) wins,
+ *    so the same code works against a laptop IP or a cloud server.
  * 2. In dev, derive it from the Metro debugger host (the machine's LAN IP),
- *    so physical devices reached via QR also hit the right API
- * 3. Fallbacks: Android emulator loopback / localhost for web + iOS sim
+ *    so physical devices reached via QR also hit the right API.
+ * 3. Fallbacks: Android emulator loopback / localhost for web + iOS sim.
  */
 function resolveApiUrl(): string {
-  if (process.env.EXPO_PUBLIC_API_URL) return process.env.EXPO_PUBLIC_API_URL;
+  const configured = (process.env.EXPO_PUBLIC_API_URL ?? "").trim();
+  if (configured) return configured.replace(/\/+$/, "");
   // On web, talk to the same host the browser is already on: avoids stale
   // hardcoded IPs and firewall/loopback issues in dev.
   if (Platform.OS === "web" && typeof window !== "undefined" && window.location?.hostname) {
     return `${window.location.protocol}//${window.location.hostname}:8000`;
   }
-  // explicit api URL from app.json extra (for native devices, e.g. "http://192.168.1.5:8000")
-  const extraApiUrl = (Constants as any).expoConfig?.extra?.apiUrl;
-  if (extraApiUrl) return String(extraApiUrl);
   const hostUri: string | undefined =
     (Constants as any).expoConfig?.hostUri ?? (Constants as any).manifest?.debuggerHost;
   if (hostUri) {

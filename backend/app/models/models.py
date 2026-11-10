@@ -375,6 +375,11 @@ class ChatMessage(Base):
     sender_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     body: Mapped[str] = mapped_column(String(2000), nullable=False)
     edited_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # High-water mark of the receipt state: sent → delivered → read.
+    # Never moves backwards, so editing a message cannot reset its ticks.
+    delivery_status: Mapped[str] = mapped_column(
+        String(12), nullable=False, default="sent", server_default="sent"
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     reactions: Mapped[list["MessageReaction"]] = relationship(

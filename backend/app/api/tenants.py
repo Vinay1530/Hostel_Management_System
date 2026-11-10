@@ -94,7 +94,7 @@ def create_tenant(body: TenantIn, auth: AuthContext = Depends(require_staff), db
         raise HTTPException(status.HTTP_409_CONFLICT, "A tenant with this phone already exists")
     t = Tenant(organization_id=auth.org_id, **body.model_dump())
     db.add(t)
-    # Give the tenant a login: phone + default password 'password' (they can change it later)
+    # Give the tenant a login with the configured default password (changeable later)
     ensure_login_user(
         db,
         phone=body.phone,
@@ -417,7 +417,7 @@ async def import_execute(
             )
             db.add(tenant)
             tenants_created += 1
-            # Bulk import also provisions a login (default password 'password')
+            # Bulk import also provisions a login (configured default password)
             ensure_login_user(
                 db,
                 phone=row["phone"],

@@ -12,6 +12,8 @@ class Settings(BaseSettings):
     jwt_ttl_minutes: int = 60 * 24 * 14
     otp_dev_mode: bool = True
     otp_ttl_minutes: int = 10
+    # Initial password for manager-created tenant logins. Override in production.
+    default_tenant_password: str = "password"
     upload_dir: Path = Path("uploads")
     # list parsed from JSON env var, e.g. CORS_ORIGINS='["http://a.com","http://b.com"]'
     cors_origins: list[str] = ["*"]
@@ -21,7 +23,12 @@ class Settings(BaseSettings):
     late_fee_charge_paise: int = 5000  # Rs 50 per overdue invoice
     complaint_escalation_hours: int = 24
 
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+    model_config = {
+        # Load the repo-root `.env` (compose/local dev) and an optional
+        # backend-local `.env` override, without committing any secrets.
+        "env_file": ("../.env", ".env"),
+        "env_file_encoding": "utf-8",
+    }
 
 
 @lru_cache

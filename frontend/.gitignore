@@ -7,3 +7,8 @@ expo-env.d.ts
 
 # Build output from `npx expo export`
 dist/
+
+# Local env (never commit real values). Keep `.env.example` tracked.
+.env
+.env.local
+.env.*.local

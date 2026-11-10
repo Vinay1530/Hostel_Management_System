@@ -18,7 +18,10 @@ from app.models.models import Membership, OtpToken, Organization, User
 
 bearer = HTTPBearer(auto_error=False)
 
-DEFAULT_TENANT_PASSWORD = "password"  # dev default for newly created tenant accounts
+
+def default_tenant_password() -> str:
+    """Initial password for newly created tenant accounts (env-configurable)."""
+    return get_settings().default_tenant_password
 
 
 def hash_password(password: str) -> str:
@@ -41,7 +44,7 @@ def ensure_login_user(db: Session, phone: str, password: str | None, org_id: uui
     user = db.execute(select(User).where(User.phone == phone)).scalar_one_or_none()
     if not user:
         user = User(phone=phone, name=name, email=email)
-        user.password_hash = hash_password(password or DEFAULT_TENANT_PASSWORD)
+        user.password_hash = hash_password(password or default_tenant_password())
         db.add(user)
         db.flush()
     else:

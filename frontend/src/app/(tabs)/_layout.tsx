@@ -1,8 +1,15 @@
-import { Tabs } from "expo-router";
+import { Redirect, Tabs } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { design } from "@/lib/design";
+import { useAuth } from "@/lib/auth";
 
 export default function TabLayout() {
+  const { ready, token } = useAuth();
+
+  // Signing out clears the token: never leave staff tabs mounted without it.
+  if (!ready) return null;
+  if (!token) return <Redirect href="/login" />;
+
   return (
     <Tabs
       screenOptions={{

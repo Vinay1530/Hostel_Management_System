@@ -193,6 +193,12 @@ def test_chat_delivery_ticks_reactions_and_edits(api):
     assert edited.status_code == 200, edited.text
     assert edited.json()["body"] == "Your rent receipt is ready to download."
     assert edited.json()["edited_at"] is not None
+    # Editing must not roll read receipts backwards.
+    assert edited.json()["delivery_status"] == "read"
+    after_edit = api.get(
+        f"/conversations/{direct['id']}/messages", headers=owner_headers
+    ).json()
+    assert after_edit["messages"][-1]["delivery_status"] == "read"
 
     # Nobody can edit someone else's message.
     denied = api.patch(
