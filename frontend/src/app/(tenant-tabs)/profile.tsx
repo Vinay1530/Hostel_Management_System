@@ -2,10 +2,10 @@ import { api, rupeesFromPaise } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { design, getShadow } from "@/lib/design";
 import { roleAccents } from "@/lib/theme";
-import { Sheet } from "@/components/ui";
+import { ConfirmDialog, Sheet } from "@/components/ui";
 import { Ionicons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
-import { useEffect, useState } from "react";
+import { useFocusEffect, useRouter } from "expo-router";
+import { useCallback, useState } from "react";
 import {
   Alert,
   Linking,
@@ -70,6 +70,33 @@ function prettyDate(value: string | null): string {
   });
 }
 
+function formatTenure(moveInIso: string | null): string {
+  if (!moveInIso) return "—";
+  const start = new Date(moveInIso.endsWith("Z") ? moveInIso : `${moveInIso}Z`);
+  const now = new Date();
+  if (isNaN(start.getTime()) || start > now) return "Just started";
+
+  let years = now.getFullYear() - start.getFullYear();
+  let months = now.getMonth() - start.getMonth();
+  let days = now.getDate() - start.getDate();
+
+  if (days < 0) {
+    months -= 1;
+    const prevMonthDays = new Date(now.getFullYear(), now.getMonth(), 0).getDate();
+    days += prevMonthDays;
+  }
+  if (months < 0) {
+    years -= 1;
+    months += 12;
+  }
+
+  const parts: string[] = [];
+  if (years > 0) parts.push(`${years} year${years > 1 ? "s" : ""}`);
+  if (months > 0) parts.push(`${months} month${months > 1 ? "s" : ""}`);
+  if (days > 0 || parts.length === 0) parts.push(`${days} day${days !== 1 ? "s" : ""}`);
+  return parts.join(", ");
+}
+
 export default function TenantProfile() {
   const { logout, token, orgId } = useAuth();
   const router = useRouter();
@@ -85,8 +112,12 @@ export default function TenantProfile() {
   const [phoneError, setPhoneError] = useState("");
   const [sendingPhone, setSendingPhone] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
+  const [noticeConfirm, setNoticeConfirm] = useState(false);
+  const [cancelConfirm, setCancelConfirm] = useState(false);
+  const [noticeBusy, setNoticeBusy] = useState(false);
+  const [noticeError, setNoticeError] = useState<string | null>(null);
 
-  async function load() {
+  const load = useCallback(async () => {
     if (!token) return;
     setLoading(true);
     setError(null);
@@ -114,12 +145,13 @@ export default function TenantProfile() {
     } finally {
       setLoading(false);
     }
-  }
-
-  useEffect(() => {
-    void load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, orgId]);
+
+  useFocusEffect(
+    useCallback(() => {
+      void load();
+    }, [load])
+  );
 
   async function signOut() {
     Alert.alert("Sign out?", "You will need your phone number and password to sign back in.", [
@@ -137,6 +169,34 @@ export default function TenantProfile() {
         },
       },
     ]);
+  }
+
+  async function startNotice() {
+    setNoticeConfirm(false);
+    setNoticeBusy(true);
+    setNoticeError(null);
+    try {
+      await api.post("/my/notice", {});
+      await load();
+    } catch (e: any) {
+      setNoticeError(e?.detail ?? e?.message ?? "Failed to start notice");
+    } finally {
+      setNoticeBusy(false);
+    }
+  }
+
+  async function cancelNotice() {
+    setCancelConfirm(false);
+    setNoticeBusy(true);
+    setNoticeError(null);
+    try {
+      await api.post("/my/notice/cancel", {});
+      await load();
+    } catch (e: any) {
+      setNoticeError(e?.detail ?? e?.message ?? "Failed to cancel notice");
+    } finally {
+      setNoticeBusy(false);
+    }
   }
 
   async function submitPhoneChange() {
@@ -351,6 +411,11 @@ export default function TenantProfile() {
                   label="Moved in"
                   value={prettyDate(profile.move_in_date)}
                 />
+                <DetailRow
+                  icon="hourglass-outline"
+                  label="Stay duration"
+                  value={formatTenure(profile.move_in_date)}
+                />
                 {noticeActive ? (
                   <DetailRow
                     icon="time-outline"
@@ -367,6 +432,68 @@ export default function TenantProfile() {
                   />
                 )}
               </View>
+            </View>
+
+            {/* Notice period management */}
+            <View style={styles.card}>
+              <View style={styles.cardHead}>
+                <View
+                  style={[
+                    styles.cardIcon,
+                    { backgroundColor: noticeActive ? design.colors.dangerLight : accent.accentSoft },
+                  ]}
+                >
+                  <Ionicons
+                    name={noticeActive ? "time" : "calendar-outline"}
+                    size={17}
+                    color={noticeActive ? design.colors.danger : accent.accent}
+                  />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <AppText variant="h4" color={design.colors.textPrimary}>
+                    Notice period
+                  </AppText>
+                  <AppText variant="caption" color={design.colors.textSecondary}>
+                    {noticeActive ? "Your notice is active" : "Planning to move out?"}
+                  </AppText>
+                </View>
+                <AppBadge variant={noticeActive ? "danger" : "neutral"}>
+                  {noticeActive ? "Active" : `${profile.notice_period_days ?? 30} days`}
+                </AppBadge>
+              </View>
+
+              <AppText
+                variant="bodySmall"
+                color={design.colors.textSecondary}
+                style={{ lineHeight: 19, marginTop: 10, marginBottom: 10 }}
+              >
+                {noticeActive
+                  ? `Notice runs ${prettyDate(profile.notice_start_date)} → ${prettyDate(
+                      profile.notice_end_date
+                    )}. Talk to your manager about the handover.`
+                  : `Start your notice and your manager is informed automatically. Default period is ${
+                      profile.notice_period_days ?? 30
+                    } day(s).`}
+              </AppText>
+
+              {noticeError ? <Text style={styles.formError}>{noticeError}</Text> : null}
+
+              <AppButton
+                variant={noticeActive ? "ghost" : "primary"}
+                fullWidth
+                loading={noticeBusy}
+                icon={noticeActive ? "close-circle-outline" : "log-out-outline"}
+                onPress={() =>
+                  noticeActive ? setCancelConfirm(true) : setNoticeConfirm(true)
+                }
+                style={
+                  noticeActive
+                    ? undefined
+                    : { backgroundColor: accent.accent }
+                }
+              >
+                {noticeActive ? "Cancel notice" : "Start notice"}
+              </AppButton>
             </View>
 
             {/* Contact */}
@@ -529,6 +656,27 @@ export default function TenantProfile() {
           Send Request
         </AppButton>
       </Sheet>
+
+      <ConfirmDialog
+        visible={noticeConfirm}
+        title="Start notice period?"
+        message={`Notice starts today. Your manager is notified automatically. Leave after ${
+          profile?.notice_period_days ?? 30
+        } day(s).`}
+        confirmLabel="Start notice"
+        busy={noticeBusy}
+        onCancel={() => setNoticeConfirm(false)}
+        onConfirm={startNotice}
+      />
+      <ConfirmDialog
+        visible={cancelConfirm}
+        title="Cancel notice?"
+        message="This clears your notice dates and informs your manager."
+        confirmLabel="Cancel notice"
+        busy={noticeBusy}
+        onCancel={() => setCancelConfirm(false)}
+        onConfirm={cancelNotice}
+      />
     </View>
   );
 }

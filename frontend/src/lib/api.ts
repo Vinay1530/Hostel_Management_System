@@ -107,6 +107,8 @@ export const api = {
     request<T>(p, { method: "POST", json }),
   patch: <T>(p: string, json?: unknown) =>
     request<T>(p, { method: "PATCH", json }),
+  put: <T>(p: string, json?: unknown) =>
+    request<T>(p, { method: "PUT", json }),
   delete: <T>(p: string) => request<T>(p, { method: "DELETE" }),
   upload: async <T>(p: string, file: { uri: string; name: string } | null, fields?: Record<string, string>) => {
     await initToken();

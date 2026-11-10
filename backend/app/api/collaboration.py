@@ -1,5 +1,6 @@
 import asyncio
 import uuid
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Annotated
 
@@ -32,6 +33,7 @@ from app.models.models import (
     Floor,
     InAppNotification,
     Membership,
+    MessageReaction,
     Property,
     Room,
     Stay,
@@ -49,14 +51,18 @@ from app.schemas.schemas import (
     ConversationOut,
     ConversationsOut,
     DirectConversationIn,
+    MessageEditIn,
     MessageIn,
     MessageOut,
     MessagePage,
+    MessageReactionIn,
+    MessageReactionOut,
     NotificationOut,
 )
 from app.services.collaboration import (
     current_tenant_property,
     ensure_property_conversations,
+    get_or_create_direct_conversation as ensure_direct_conversation,
     property_for_staff,
     require_conversation_participant,
 )
@@ -419,6 +425,59 @@ def mark_notification_read(
     return notification
 
 
+def _as_utc(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+
+
+def _delivery_status(db: Session, message: ChatMessage) -> str:
+    """sent = nobody received it yet, delivered = every recipient got it,
+    read = every recipient opened the thread after it was sent."""
+    recipients = db.execute(
+        select(ConversationParticipant).where(
+            ConversationParticipant.conversation_id == message.conversation_id,
+            ConversationParticipant.user_id != message.sender_id,
+        )
+    ).scalars().all()
+    if not recipients:
+        return "sent"
+
+    created = _as_utc(message.created_at)
+    delivered = all(
+        (stamp := _as_utc(participant.last_delivered_at)) is not None and stamp >= created
+        for participant in recipients
+    )
+    read = all(
+        (stamp := _as_utc(participant.last_read_at)) is not None and stamp >= created
+        for participant in recipients
+    )
+    if read:
+        return "read"
+    if delivered:
+        return "delivered"
+    return "sent"
+
+
+def _message_reactions(db: Session, message: ChatMessage) -> list[MessageReactionOut]:
+    rows = db.execute(
+        select(MessageReaction)
+        .where(MessageReaction.message_id == message.id)
+        .order_by(MessageReaction.created_at)
+    ).scalars().all()
+    result: list[MessageReactionOut] = []
+    for row in rows:
+        user = db.get(User, row.user_id)
+        result.append(
+            MessageReactionOut(
+                emoji=row.emoji,
+                user_id=row.user_id,
+                user_name=(user.name or user.phone) if user else "Former user",
+            )
+        )
+    return result
+
+
 def _message_out(db: Session, message: ChatMessage) -> MessageOut:
     sender = db.get(User, message.sender_id)
     return MessageOut(
@@ -428,6 +487,9 @@ def _message_out(db: Session, message: ChatMessage) -> MessageOut:
         sender_name=(sender.name or sender.phone) if sender else "Former user",
         body=message.body,
         created_at=message.created_at,
+        edited_at=message.edited_at,
+        delivery_status=_delivery_status(db, message),
+        reactions=_message_reactions(db, message),
     )
 
 
@@ -644,11 +706,11 @@ def list_conversations(
                         property_name=prop.name,
                     )
                 )
-    return ConversationsOut(conversations=result, contacts=contacts)
+    return ConversationsOut(conversations=result, contacts=contacts, me_id=auth.user.id)
 
 
 @router.post("/conversations/direct", response_model=ConversationOut)
-def get_or_create_direct_conversation(
+def open_direct_conversation(
     body: DirectConversationIn,
     auth: AuthContext = Depends(require_org),
     db: Session = Depends(get_db),
@@ -694,28 +756,9 @@ def get_or_create_direct_conversation(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "User is not a member of this property")
     if is_staff:
         ensure_property_conversations(db, prop)
-    low, high = sorted((auth.user.id, target.id), key=str)
-    conversation = db.execute(
-        select(Conversation).where(
-            Conversation.property_id == prop.id,
-            Conversation.type == ConversationType.direct,
-            Conversation.direct_user_low_id == low,
-            Conversation.direct_user_high_id == high,
-        )
-    ).scalar_one_or_none()
-    if conversation is None:
-        conversation = Conversation(
-            organization_id=auth.org_id,
-            property_id=prop.id,
-            type=ConversationType.direct,
-            direct_user_low_id=low,
-            direct_user_high_id=high,
-        )
-        db.add(conversation)
-        db.flush()
-    for user_id in (auth.user.id, target.id):
-        if db.get(ConversationParticipant, (conversation.id, user_id)) is None:
-            db.add(ConversationParticipant(conversation_id=conversation.id, user_id=user_id))
+    conversation = ensure_direct_conversation(
+        db, auth.org_id, prop, auth.user.id, target.id
+    )
     db.commit()
     db.refresh(conversation)
     latest = db.execute(
@@ -773,6 +816,7 @@ def list_messages(
     ).scalars().all()
     page = rows[:30]
     participant = db.get(ConversationParticipant, (conversation.id, auth.user.id))
+    participant.last_delivered_at = func.now()
     participant.last_read_at = func.now()
     db.commit()
     return MessagePage(
@@ -795,6 +839,7 @@ async def _save_message(
         body=text,
     )
     participant = db.get(ConversationParticipant, (conversation.id, auth.user.id))
+    participant.last_delivered_at = func.now()
     participant.last_read_at = func.now()
     db.add(message)
     db.commit()
@@ -813,8 +858,131 @@ async def create_message(
     if conversation.organization_id != auth.org_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Conversation not found")
     message = await _save_message(db, conversation, auth, body)
-    await chat_connections.broadcast(conversation.id, message.model_dump(mode="json"))
+    await chat_connections.broadcast(
+        conversation.id, {"type": "message", "message": message.model_dump(mode="json")}
+    )
     return message
+
+
+@router.patch(
+    "/conversations/{conversation_id}/messages/{message_id}", response_model=MessageOut
+)
+async def edit_message(
+    conversation_id: uuid.UUID,
+    message_id: uuid.UUID,
+    body: MessageEditIn,
+    auth: AuthContext = Depends(require_org),
+    db: Session = Depends(get_db),
+):
+    conversation = require_conversation_participant(db, conversation_id, auth.user.id)
+    if conversation.organization_id != auth.org_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Conversation not found")
+    message = db.get(ChatMessage, message_id)
+    if message is None or message.conversation_id != conversation.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Message not found")
+    if message.sender_id != auth.user.id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "You can only edit your own messages")
+
+    created = _as_utc(message.created_at)
+    if created is not None and datetime.now(timezone.utc) - created > timedelta(hours=1):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Messages can only be edited within 1 hour of sending",
+        )
+
+    text = body.body.strip()
+    if not text:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Message cannot be empty")
+    message.body = text
+    message.edited_at = func.now()
+    db.commit()
+    db.refresh(message)
+
+    out = _message_out(db, message)
+    await chat_connections.broadcast(
+        conversation.id, {"type": "message_updated", "message": out.model_dump(mode="json")}
+    )
+    return out
+
+
+@router.put(
+    "/conversations/{conversation_id}/messages/{message_id}/reaction",
+    response_model=MessageOut,
+)
+async def set_message_reaction(
+    conversation_id: uuid.UUID,
+    message_id: uuid.UUID,
+    body: MessageReactionIn,
+    auth: AuthContext = Depends(require_org),
+    db: Session = Depends(get_db),
+):
+    conversation = require_conversation_participant(db, conversation_id, auth.user.id)
+    if conversation.organization_id != auth.org_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Conversation not found")
+    message = db.get(ChatMessage, message_id)
+    if message is None or message.conversation_id != conversation.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Message not found")
+
+    emoji = body.emoji.strip()
+    if not emoji:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Reaction cannot be empty")
+    reaction = db.execute(
+        select(MessageReaction).where(
+            MessageReaction.message_id == message.id,
+            MessageReaction.user_id == auth.user.id,
+        )
+    ).scalar_one_or_none()
+    if reaction is None:
+        db.add(
+            MessageReaction(
+                message_id=message.id,
+                user_id=auth.user.id,
+                emoji=emoji,
+            )
+        )
+    else:
+        reaction.emoji = emoji
+    db.commit()
+
+    out = _message_out(db, message)
+    await chat_connections.broadcast(
+        conversation.id, {"type": "message_updated", "message": out.model_dump(mode="json")}
+    )
+    return out
+
+
+@router.delete(
+    "/conversations/{conversation_id}/messages/{message_id}/reaction",
+    response_model=MessageOut,
+)
+async def remove_message_reaction(
+    conversation_id: uuid.UUID,
+    message_id: uuid.UUID,
+    auth: AuthContext = Depends(require_org),
+    db: Session = Depends(get_db),
+):
+    conversation = require_conversation_participant(db, conversation_id, auth.user.id)
+    if conversation.organization_id != auth.org_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Conversation not found")
+    message = db.get(ChatMessage, message_id)
+    if message is None or message.conversation_id != conversation.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Message not found")
+
+    reaction = db.execute(
+        select(MessageReaction).where(
+            MessageReaction.message_id == message.id,
+            MessageReaction.user_id == auth.user.id,
+        )
+    ).scalar_one_or_none()
+    if reaction is not None:
+        db.delete(reaction)
+        db.commit()
+
+    out = _message_out(db, message)
+    await chat_connections.broadcast(
+        conversation.id, {"type": "message_updated", "message": out.model_dump(mode="json")}
+    )
+    return out
 
 
 @router.websocket("/ws/chat")
@@ -855,14 +1023,24 @@ async def chat_websocket(websocket: WebSocket):
             await websocket.close(code=4403)
             return
         await chat_connections.connect(conversation_id, websocket)
+        participant.last_delivered_at = func.now()
         participant.last_read_at = func.now()
         db.commit()
         while True:
             try:
                 raw = await websocket.receive_json()
                 if isinstance(raw, dict) and raw.get("type") == "read":
+                    participant.last_delivered_at = func.now()
                     participant.last_read_at = func.now()
                     db.commit()
+                    await chat_connections.broadcast(
+                        conversation_id,
+                        {
+                            "type": "read",
+                            "user_id": str(user_id),
+                            "read_at": datetime.now(timezone.utc).isoformat(),
+                        },
+                    )
                     continue
                 body = MessageIn.model_validate(raw)
             except (ValueError, ValidationError):
@@ -880,11 +1058,15 @@ async def chat_websocket(websocket: WebSocket):
             if not message.body:
                 await websocket.send_json({"error": "Message cannot be empty"})
                 continue
+            participant.last_delivered_at = func.now()
             participant.last_read_at = func.now()
             db.add(message)
             db.commit()
             db.refresh(message)
-            await chat_connections.broadcast(conversation.id, _message_out(db, message).model_dump(mode="json"))
+            out = _message_out(db, message)
+            await chat_connections.broadcast(
+                conversation.id, {"type": "message", "message": out.model_dump(mode="json")}
+            )
     except WebSocketDisconnect:
         pass
     finally:

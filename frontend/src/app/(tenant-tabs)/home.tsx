@@ -1,13 +1,11 @@
-import { ConfirmDialog, Sheet } from "@/components/ui";
 import { api, rupeesFromPaise } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useNotifications } from "@/lib/notifications";
-import { fetchPublicPg, type PublicPgDetail } from "@/lib/public";
 import { getShadow } from "@/lib/design";
 import { roleAccents, theme } from "@/lib/theme";
 import { Ionicons } from "@expo/vector-icons";
 import { Redirect, useFocusEffect, useRouter } from "expo-router";
-import { Linking, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useCallback, useState } from "react";
 import { Skeleton } from "@/components/ui-components";
 
@@ -60,6 +58,16 @@ function prettyDate(iso?: string | null): string {
   return date.toLocaleDateString("en-IN", { day: "2-digit", month: "short" });
 }
 
+function monthLabel(month?: string | null): string {
+  if (!month) return "Rent";
+  const [year, m] = month.split("-").map(Number);
+  if (!year || !m) return month;
+  return `${new Date(year, m - 1, 1).toLocaleDateString("en-IN", {
+    month: "long",
+    year: "numeric",
+  })} rent`;
+}
+
 function formatTenure(moveInIso: string | null): string {
   if (!moveInIso) return "—";
   const start = new Date(moveInIso);
@@ -96,18 +104,11 @@ function initials(name: string): string {
 }
 
 export default function TenantHome() {
-  const { logout, ready, token, orgId } = useAuth();
+  const { ready, token } = useAuth();
   const { unread } = useNotifications();
   const router = useRouter();
   const [data, setData] = useState<MyOverview | null>(null);
-  const [pg, setPg] = useState<PublicPgDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [noticeConfirm, setNoticeConfirm] = useState(false);
-  const [cancelConfirm, setCancelConfirm] = useState(false);
-  const [confirmSignout, setConfirmSignout] = useState(false);
-  const [profileOpen, setProfileOpen] = useState(false);
-  const [roomOpen, setRoomOpen] = useState(true);
-  const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
     if (!token) return;
@@ -122,8 +123,7 @@ export default function TenantHome() {
   useFocusEffect(
     useCallback(() => {
       load();
-      if (orgId) fetchPublicPg(orgId).then(setPg).catch(() => setPg(null));
-    }, [load, orgId])
+    }, [load])
   );
 
   if (!ready) return <Splash />;
@@ -136,32 +136,6 @@ export default function TenantHome() {
   const totalDue = unpaid.reduce((sum, inv) => sum + inv.balance_paise, 0);
   const nextDue = [...unpaid].sort((a, b) => String(a.due_date).localeCompare(String(b.due_date)))[0];
   const bookingActive = !!p?.room_number;
-
-  async function startNotice() {
-    setNoticeConfirm(false);
-    setBusy(true);
-    try {
-      await api.post("/my/notice", {});
-      await load();
-    } catch (e: any) {
-      setError(e?.detail ?? e?.message ?? "Failed to start notice");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function cancelNotice() {
-    setCancelConfirm(false);
-    setBusy(true);
-    try {
-      await api.post("/my/notice/cancel", {});
-      await load();
-    } catch (e: any) {
-      setError(e?.detail ?? e?.message ?? "Failed to cancel notice");
-    } finally {
-      setBusy(false);
-    }
-  }
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
@@ -184,7 +158,11 @@ export default function TenantHome() {
             </View>
           )}
         </Pressable>
-        <Pressable style={styles.avatarBtn} onPress={() => setProfileOpen(true)}>
+        <Pressable
+          style={styles.avatarBtn}
+          onPress={() => router.push("/(tenant-tabs)/profile")}
+          accessibilityLabel="Open profile"
+        >
           <Text style={styles.avatarBtnText}>{initials(p?.full_name ?? "U")}</Text>
         </Pressable>
       </View>
@@ -207,9 +185,8 @@ export default function TenantHome() {
             <Skeleton height={108} radius={16} style={{ flex: 1 }} />
             <Skeleton height={108} radius={16} style={{ flex: 1 }} />
           </View>
-          <Skeleton height={190} radius={16} />
-          <Skeleton height={80} radius={16} />
           <Skeleton height={150} radius={16} />
+          <Skeleton height={90} radius={16} />
         </View>
       )}
 
@@ -230,7 +207,10 @@ export default function TenantHome() {
               </Text>
             </View>
 
-            <View style={styles.kpiCard}>
+            <Pressable
+              style={styles.kpiCard}
+              onPress={() => router.push("/(tenant-tabs)/profile")}
+            >
               <View style={styles.kpiIcon}>
                 <Ionicons name="bed" size={15} color={accent.accent} />
               </View>
@@ -241,9 +221,12 @@ export default function TenantHome() {
               <Text style={styles.kpiSub} numberOfLines={1}>
                 Bed {p.bed_label ?? "—"}
               </Text>
-            </View>
+            </Pressable>
 
-            <View style={styles.kpiCard}>
+            <Pressable
+              style={styles.kpiCard}
+              onPress={() => router.push("/(tenant-tabs)/profile")}
+            >
               <View style={[styles.kpiIcon, { backgroundColor: theme.successSoft }]}>
                 <Ionicons name="calendar" size={15} color={theme.success} />
               </View>
@@ -257,44 +240,26 @@ export default function TenantHome() {
               <Text style={styles.kpiSub} numberOfLines={1}>
                 {formatTenure(p.move_in_date)}
               </Text>
-            </View>
+            </Pressable>
           </View>
 
-          {/* Room details */}
+          {/* Next payment */}
           <View style={styles.card}>
-            <Pressable style={styles.cardHeader} onPress={() => setRoomOpen((v) => !v)}>
+            <View style={styles.cardHeaderStatic}>
               <View style={{ flex: 1 }}>
-                <Text style={styles.sectionTitle}>Room Details</Text>
+                <Text style={styles.sectionTitle}>
+                  {totalDue > 0 ? "Next payment" : "All caught up"}
+                </Text>
                 <Text style={styles.cardHeaderSub}>
-                  {p.property_name ? `${p.property_name} · Room ${p.room_number ?? "—"}` : "No room assigned yet"}
-                </Text>
-              </View>
-              <Ionicons
-                name={roomOpen ? "chevron-up" : "chevron-down"}
-                size={18}
-                color={theme.textLight}
-              />
-            </Pressable>
-
-            <View style={styles.roomHero}>
-              <View style={styles.roomIcon}>
-                <Ionicons name="bed" size={22} color={accent.accent} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.roomTitle}>
-                  Room {p.room_number ?? "—"}
-                </Text>
-                <Text style={styles.roomSub}>
-                  Bed {p.bed_label ?? "—"} · {p.property_name ?? "PG"}
+                  {totalDue > 0
+                    ? monthLabel(nextDue?.period_month)
+                    : "You have no pending dues"}
                 </Text>
               </View>
               <View
                 style={[
                   styles.statusChip,
-                  {
-                    backgroundColor:
-                      totalDue > 0 ? theme.warnSoft : theme.successSoft,
-                  },
+                  { backgroundColor: totalDue > 0 ? theme.warnSoft : theme.successSoft },
                 ]}
               >
                 <Text
@@ -303,39 +268,48 @@ export default function TenantHome() {
                     { color: totalDue > 0 ? "#92400e" : theme.success },
                   ]}
                 >
-                  {totalDue > 0 ? "Next bill pending" : "All clear"}
+                  {totalDue > 0 ? "Due" : "Clear"}
                 </Text>
               </View>
             </View>
 
-            {roomOpen && (
-              <View style={styles.detailRows}>
-                <DetailRow
-                  label="Rent due date"
-                  value={totalDue > 0 ? prettyDate(nextDue?.due_date) : "No dues"}
-                  valueColor={totalDue > 0 ? theme.warn : theme.success}
-                />
-                <DetailRow
-                  label="Notice period"
-                  value={
-                    onNotice
-                      ? `${d(p.notice_start_date)} → ${d(p.notice_end_date)}`
-                      : `${p.notice_period_days ?? 30} days`
-                  }
-                  valueColor={onNotice ? theme.danger : theme.text}
-                />
-                <DetailRow
-                  label="Moved in"
-                  value={d(p.move_in_date)}
-                />
-                <DetailRow
-                  label="Stay duration"
-                  value={formatTenure(p.move_in_date)}
-                  valueColor={accent.accentText}
-                />
-              </View>
-            )}
+            <View style={styles.amountRow}>
+              <Text style={styles.amountValue} numberOfLines={1} adjustsFontSizeToFit>
+                {rupeesFromPaise(totalDue)}
+              </Text>
+              <Text style={styles.amountSub}>
+                {totalDue > 0 ? `Due by ${prettyDate(nextDue?.due_date)}` : "Nothing to pay"}
+              </Text>
+            </View>
+
+            <Pressable
+              style={styles.primaryBtn}
+              onPress={() => router.push("/(tenant-tabs)/dues")}
+            >
+              <Text style={styles.primaryBtnText}>
+                {totalDue > 0 ? "Pay rent" : "View payment history"}
+              </Text>
+            </Pressable>
           </View>
+
+          {/* Notice summary */}
+          {onNotice && (
+            <Pressable
+              style={styles.noticeCard}
+              onPress={() => router.push("/(tenant-tabs)/profile")}
+            >
+              <View style={styles.noticeIcon}>
+                <Ionicons name="time-outline" size={17} color={theme.danger} />
+              </View>
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Text style={styles.noticeTitle}>Notice period active</Text>
+                <Text style={styles.noticeSub} numberOfLines={1}>
+                  {d(p.notice_start_date)} → {d(p.notice_end_date)}
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={16} color={theme.textMuted} />
+            </Pressable>
+          )}
 
           {/* Quick actions */}
           <Text style={styles.sectionLabel}>QUICK ACTIONS</Text>
@@ -346,191 +320,19 @@ export default function TenantHome() {
             <QuickAction icon="receipt" label="History" onPress={() => router.push("/(tenant-tabs)/history")} />
           </View>
 
-          {/* Rent & deposit */}
-          <View style={styles.card}>
-            <Text style={styles.sectionTitle}>Rent & Deposit</Text>
-            <DetailRow
-              label="Agreed rent"
-              value={p.rent_paise != null ? `${rupeesFromPaise(p.rent_paise)} / month` : "—"}
-            />
-            <DetailRow
-              label="Security deposit"
-              value={p.deposit_paise != null ? rupeesFromPaise(p.deposit_paise) : "—"}
-            />
-            {pg?.contact_phone && (
-              <Pressable
-                style={styles.callBtn}
-                onPress={() => Linking.openURL(`tel:${pg.contact_phone}`)}
-              >
-                <Ionicons name="call" size={15} color="#fff" />
-                <Text style={styles.callText}>Call manager · {pg.contact_phone}</Text>
-              </Pressable>
-            )}
-          </View>
-
-          {/* Notice */}
-          {p.notice_period_days != null && (
-            <View style={styles.card}>
-              <View style={styles.cardHeaderStatic}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.sectionTitle}>Notice Period</Text>
-                  <Text style={styles.cardHeaderSub}>
-                    {onNotice ? "Your notice is active" : "Planning to leave?"}
-                  </Text>
-                </View>
-                <View
-                  style={[
-                    styles.statusChip,
-                    { backgroundColor: onNotice ? theme.dangerSoft : theme.chipBg },
-                  ]}
-                >
-                  <Text
-                    style={[
-                      styles.statusChipText,
-                      { color: onNotice ? theme.danger : theme.textLight },
-                    ]}
-                  >
-                    {onNotice ? "Active" : `${p.notice_period_days} days`}
-                  </Text>
-                </View>
-              </View>
-              <Text style={styles.noticeText}>
-                {onNotice
-                  ? `Notice runs ${d(p.notice_start_date)} → ${d(p.notice_end_date)}. Talk to your manager about the handover.`
-                  : `Start your notice and your manager is informed automatically. Default period is ${p.notice_period_days} day(s).`}
-              </Text>
-              <Pressable
-                style={onNotice ? styles.ghostBtn : styles.primaryBtn}
-                onPress={() => (onNotice ? setCancelConfirm(true) : setNoticeConfirm(true))}
-                disabled={busy}
-              >
-                <Text style={onNotice ? styles.ghostBtnText : styles.primaryBtnText}>
-                  {onNotice ? "Cancel notice" : "Start notice"}
-                </Text>
-              </Pressable>
-            </View>
-          )}
-
-          {/* My requests */}
-          <View style={styles.card}>
-            <Text style={styles.sectionTitle}>My Requests</Text>
-            <RequestRow
-              icon="swap-horizontal"
-              label="Bed / room change"
-              onPress={() => router.push("/change-request")}
-            />
-            <RequestRow
-              icon="alert-circle"
-              label="My complaints"
-              onPress={() => router.push("/complaints")}
-            />
-            <RequestRow
-              icon="star"
-              label="Share feedback"
-              onPress={() => router.push("/feedback")}
-              last
-            />
-          </View>
+          <Pressable
+            style={styles.profileLink}
+            onPress={() => router.push("/(tenant-tabs)/profile")}
+          >
+            <Ionicons name="person-circle-outline" size={17} color={accent.accent} />
+            <Text style={styles.profileLinkText}>
+              Stay details, rent, notice and account in Profile
+            </Text>
+            <Ionicons name="chevron-forward" size={15} color={theme.textMuted} />
+          </Pressable>
         </>
       )}
-
-      <ConfirmDialog
-        visible={noticeConfirm}
-        title="Start notice period?"
-        message={`Notice starts today. Your manager is notified automatically. Leave after ${p?.notice_period_days ?? 30} day(s).`}
-        confirmLabel="Start notice"
-        busy={busy}
-        onCancel={() => setNoticeConfirm(false)}
-        onConfirm={startNotice}
-      />
-      <ConfirmDialog
-        visible={cancelConfirm}
-        title="Cancel notice?"
-        message="This clears your notice dates and informs your manager."
-        confirmLabel="Cancel notice"
-        busy={busy}
-        onCancel={() => setCancelConfirm(false)}
-        onConfirm={cancelNotice}
-      />
-      <ConfirmDialog
-        visible={confirmSignout}
-        title="Sign out?"
-        message="You can log back in anytime with your phone number and password."
-        confirmLabel="Sign out"
-        onCancel={() => setConfirmSignout(false)}
-        onConfirm={() => {
-          setConfirmSignout(false);
-          logout().then(() => router.replace("/login"));
-        }}
-      />
-
-      <Sheet visible={profileOpen} onClose={() => setProfileOpen(false)}>
-        <View style={styles.profileTop}>
-          <View style={styles.profileAvatar}>
-            <Text style={styles.profileAvatarText}>
-              {initials(p?.full_name ?? "U")}
-            </Text>
-          </View>
-          <Text style={styles.profileName}>{p?.full_name}</Text>
-          <Text style={styles.profilePhone}>{p?.phone}</Text>
-        </View>
-
-        <View style={{ gap: 2, marginVertical: 6 }}>
-          <DetailRow
-            label="Stay location"
-            value={
-              p?.property_name
-                ? `${p.property_name} · Room ${p.room_number} · Bed ${p.bed_label}`
-                : "None"
-            }
-          />
-          {p?.email ? <DetailRow label="Email" value={p.email} /> : null}
-          {p?.id_number ? <DetailRow label="Govt ID / KYC" value={p.id_number} /> : null}
-          {p?.emergency_contact_name ? (
-            <DetailRow
-              label="Emergency contact"
-              value={`${p.emergency_contact_name}${p.emergency_contact_phone ? ` (${p.emergency_contact_phone})` : ""}`}
-            />
-          ) : null}
-        </View>
-
-        <Pressable
-          style={styles.signoutBtn}
-          onPress={() => {
-            setProfileOpen(false);
-            setConfirmSignout(true);
-          }}
-        >
-          <Ionicons name="log-out-outline" size={18} color={theme.danger} />
-          <Text style={styles.signoutText}>Sign out</Text>
-        </Pressable>
-        <Pressable style={styles.closeBtn} onPress={() => setProfileOpen(false)}>
-          <Text style={styles.closeBtnText}>Close</Text>
-        </Pressable>
-      </Sheet>
     </ScrollView>
-  );
-}
-
-function DetailRow({
-  label,
-  value,
-  valueColor,
-}: {
-  label: string;
-  value: string;
-  valueColor?: string;
-}) {
-  return (
-    <View style={styles.detailRow}>
-      <Text style={styles.detailLabel}>{label}</Text>
-      <Text
-        style={[styles.detailValue, valueColor ? { color: valueColor } : null]}
-        numberOfLines={1}
-      >
-        {value}
-      </Text>
-    </View>
   );
 }
 
@@ -551,31 +353,6 @@ function QuickAction({
       <Text style={styles.quickLabel} numberOfLines={1}>
         {label}
       </Text>
-    </Pressable>
-  );
-}
-
-function RequestRow({
-  icon,
-  label,
-  onPress,
-  last,
-}: {
-  icon: string;
-  label: string;
-  onPress: () => void;
-  last?: boolean;
-}) {
-  return (
-    <Pressable
-      style={[styles.requestRow, last && { borderBottomWidth: 0 }]}
-      onPress={onPress}
-    >
-      <View style={styles.requestIcon}>
-        <Ionicons name={icon as any} size={17} color={accent.accent} />
-      </View>
-      <Text style={styles.requestLabel}>{label}</Text>
-      <Ionicons name="chevron-forward" size={16} color={theme.textMuted} />
     </Pressable>
   );
 }
@@ -692,7 +469,6 @@ const styles = StyleSheet.create({
     borderColor: theme.border,
     ...getShadow("sm"),
   },
-  cardHeader: { flexDirection: "row", alignItems: "center", gap: 8 },
   cardHeaderStatic: { flexDirection: "row", alignItems: "center", gap: 8 },
   cardHeaderSub: { fontSize: 12, color: theme.textLight, marginTop: 1 },
   sectionTitle: { fontSize: 15, fontWeight: "800", color: theme.text },
@@ -703,43 +479,46 @@ const styles = StyleSheet.create({
     color: theme.textLight,
     marginBottom: 9,
   },
-  roomHero: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    marginTop: 12,
-    padding: 11,
-    borderRadius: 12,
-    backgroundColor: accent.accentSoft,
-  },
-  roomIcon: {
-    width: 42,
-    height: 42,
-    borderRadius: 13,
-    backgroundColor: "#fff",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  roomTitle: { fontSize: 16, fontWeight: "800", color: theme.text },
-  roomSub: { fontSize: 11, color: theme.textLight, fontWeight: "600", marginTop: 1 },
   statusChip: {
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 8,
   },
   statusChipText: { fontSize: 9, fontWeight: "800", letterSpacing: 0.2 },
-  detailRows: { marginTop: 8 },
-  detailRow: {
+  amountRow: {
+    flexDirection: "row",
+    alignItems: "baseline",
+    justifyContent: "space-between",
+    gap: 10,
+    marginTop: 14,
+    marginBottom: 12,
+  },
+  amountValue: { fontSize: 28, fontWeight: "800", color: theme.text, letterSpacing: -0.5 },
+  amountSub: { fontSize: 11, fontWeight: "700", color: theme.textLight },
+
+  // Notice summary
+  noticeCard: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
-    gap: 12,
-    paddingVertical: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: theme.border,
+    gap: 10,
+    backgroundColor: "#fff",
+    borderRadius: 16,
+    padding: 12,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: theme.border,
+    ...getShadow("sm"),
   },
-  detailLabel: { fontSize: 12, color: theme.textLight, fontWeight: "600" },
-  detailValue: { fontSize: 12, fontWeight: "700", color: theme.text, maxWidth: "62%", textAlign: "right" },
+  noticeIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: 11,
+    backgroundColor: theme.dangerSoft,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  noticeTitle: { fontSize: 13, fontWeight: "800", color: theme.text },
+  noticeSub: { fontSize: 11, color: theme.textLight, marginTop: 1 },
 
   // Quick actions
   quickRow: { flexDirection: "row", gap: 4, marginBottom: 16 },
@@ -754,27 +533,21 @@ const styles = StyleSheet.create({
   },
   quickLabel: { fontSize: 10, fontWeight: "700", color: theme.textLight, textAlign: "center" },
 
-  // Requests
-  requestRow: {
+  profileLink: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 10,
+    gap: 8,
+    backgroundColor: "#fff",
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: theme.border,
+    paddingHorizontal: 12,
     paddingVertical: 11,
-    borderBottomWidth: 1,
-    borderBottomColor: theme.border,
+    ...getShadow("sm"),
   },
-  requestIcon: {
-    width: 32,
-    height: 32,
-    borderRadius: 10,
-    backgroundColor: accent.accentSoft,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  requestLabel: { flex: 1, fontSize: 13, fontWeight: "700", color: theme.text },
+  profileLinkText: { flex: 1, fontSize: 11, fontWeight: "700", color: theme.textLight },
 
-  // Notice
-  noticeText: { fontSize: 12, color: theme.textLight, lineHeight: 18, marginTop: 8, marginBottom: 10 },
+  // Buttons
   primaryBtn: {
     backgroundColor: accent.accent,
     borderRadius: 12,
@@ -784,29 +557,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   primaryBtnText: { color: "#fff", fontWeight: "800", fontSize: 13 },
-  ghostBtn: {
-    backgroundColor: theme.chipBg,
-    borderRadius: 12,
-    paddingVertical: 12,
-    alignItems: "center",
-    minHeight: 44,
-    justifyContent: "center",
-  },
-  ghostBtnText: { color: theme.danger, fontWeight: "800", fontSize: 13 },
-
-  // Call
-  callBtn: {
-    marginTop: 12,
-    backgroundColor: accent.accent,
-    borderRadius: 12,
-    paddingVertical: 12,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-    minHeight: 44,
-  },
-  callText: { color: "#fff", fontWeight: "800", fontSize: 13 },
 
   // Error
   errorCard: {
@@ -821,39 +571,4 @@ const styles = StyleSheet.create({
   errorText: { flex: 1, color: theme.danger, fontSize: 12 },
   retryBtn: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8, backgroundColor: "#fff" },
   retryText: { color: theme.danger, fontSize: 11, fontWeight: "800" },
-
-  // Profile sheet
-  profileTop: { alignItems: "center", marginBottom: 12 },
-  profileAvatar: {
-    width: 68,
-    height: 68,
-    borderRadius: 22,
-    backgroundColor: accent.accent,
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 8,
-  },
-  profileAvatarText: { color: "#fff", fontWeight: "800", fontSize: 22 },
-  profileName: { fontSize: 18, fontWeight: "800", color: theme.text },
-  profilePhone: { fontSize: 13, color: theme.textLight, marginTop: 2 },
-  signoutBtn: {
-    marginTop: 14,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 7,
-    minHeight: 46,
-    borderRadius: 12,
-    backgroundColor: theme.dangerSoft,
-  },
-  signoutText: { color: theme.danger, fontWeight: "800", fontSize: 13 },
-  closeBtn: {
-    marginTop: 8,
-    minHeight: 44,
-    borderRadius: 12,
-    backgroundColor: theme.chipBg,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  closeBtnText: { color: theme.textLight, fontWeight: "800", fontSize: 13 },
 });

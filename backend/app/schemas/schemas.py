@@ -531,6 +531,7 @@ class ConversationContactOut(BaseModel):
 class ConversationsOut(BaseModel):
     conversations: list[ConversationOut]
     contacts: list[ConversationContactOut]
+    me_id: uuid.UUID | None = None
 
 
 class DirectConversationIn(BaseModel):
@@ -542,6 +543,20 @@ class MessageIn(BaseModel):
     body: str = Field(min_length=1, max_length=2000)
 
 
+class MessageEditIn(BaseModel):
+    body: str = Field(min_length=1, max_length=2000)
+
+
+class MessageReactionIn(BaseModel):
+    emoji: str = Field(min_length=1, max_length=16)
+
+
+class MessageReactionOut(BaseModel):
+    emoji: str
+    user_id: uuid.UUID
+    user_name: str
+
+
 class MessageOut(BaseModel):
     id: uuid.UUID
     conversation_id: uuid.UUID
@@ -549,6 +564,9 @@ class MessageOut(BaseModel):
     sender_name: str
     body: str
     created_at: datetime
+    edited_at: datetime | None = None
+    delivery_status: str = "sent"
+    reactions: list[MessageReactionOut] = []
 
 
 class MessagePage(BaseModel):

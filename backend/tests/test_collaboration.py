@@ -105,3 +105,163 @@ def test_only_conversation_participants_can_read_messages(api):
         headers=tenant_two_headers,
     )
     assert denied.status_code == 404
+
+
+def _open_direct_with_tenant(api, owner_headers, ids, tenant_phone):
+    contacts = api.get(
+        f"/conversations?property_id={ids['property']['id']}", headers=owner_headers
+    ).json()["contacts"]
+    contact = next(contact for contact in contacts if contact["phone"] == tenant_phone)
+    direct = api.post(
+        "/conversations/direct",
+        headers=owner_headers,
+        json={
+            "other_user_id": contact["user_id"],
+            "property_id": ids["property"]["id"],
+        },
+    )
+    assert direct.status_code == 200, direct.text
+    return direct.json()
+
+
+def test_chat_delivery_ticks_reactions_and_edits(api):
+    owner_headers, ids, tenant_one, _ = _make_property_with_two_tenants(api)
+    tenant_headers = _tenant_headers(api, tenant_one["phone"])
+    direct = _open_direct_with_tenant(api, owner_headers, ids, tenant_one["phone"])
+
+    posted = api.post(
+        f"/conversations/{direct['id']}/messages",
+        headers=owner_headers,
+        json={"body": "Your rent receipt is ready."},
+    )
+    assert posted.status_code == 201, posted.text
+    message = posted.json()
+    assert message["delivery_status"] == "sent"
+    assert message["reactions"] == []
+    assert message["edited_at"] is None
+
+    # Opening the thread marks the message delivered + read.
+    tenant_view = api.get(
+        f"/conversations/{direct['id']}/messages", headers=tenant_headers
+    )
+    assert tenant_view.status_code == 200, tenant_view.text
+    assert tenant_view.json()["messages"][-1]["delivery_status"] == "read"
+    owner_view = api.get(
+        f"/conversations/{direct['id']}/messages", headers=owner_headers
+    ).json()
+    assert owner_view["messages"][-1]["delivery_status"] == "read"
+
+    # Reactions: each participant gets one, upsert replaces their emoji.
+    owner_reaction = api.put(
+        f"/conversations/{direct['id']}/messages/{message['id']}/reaction",
+        headers=owner_headers,
+        json={"emoji": "👍"},
+    )
+    assert owner_reaction.status_code == 200, owner_reaction.text
+    assert [r["emoji"] for r in owner_reaction.json()["reactions"]] == ["👍"]
+
+    tenant_reaction = api.put(
+        f"/conversations/{direct['id']}/messages/{message['id']}/reaction",
+        headers=tenant_headers,
+        json={"emoji": "❤️"},
+    )
+    assert tenant_reaction.status_code == 200, tenant_reaction.text
+    assert len(tenant_reaction.json()["reactions"]) == 2
+
+    changed = api.put(
+        f"/conversations/{direct['id']}/messages/{message['id']}/reaction",
+        headers=owner_headers,
+        json={"emoji": "😂"},
+    )
+    assert changed.status_code == 200, changed.text
+    emojis = sorted(r["emoji"] for r in changed.json()["reactions"])
+    assert emojis == sorted(["😂", "❤️"])
+
+    removed = api.delete(
+        f"/conversations/{direct['id']}/messages/{message['id']}/reaction",
+        headers=owner_headers,
+    )
+    assert removed.status_code == 200, removed.text
+    assert [r["emoji"] for r in removed.json()["reactions"]] == ["❤️"]
+
+    # Own messages can be edited inside the window and carry edited_at.
+    edited = api.patch(
+        f"/conversations/{direct['id']}/messages/{message['id']}",
+        headers=owner_headers,
+        json={"body": "Your rent receipt is ready to download."},
+    )
+    assert edited.status_code == 200, edited.text
+    assert edited.json()["body"] == "Your rent receipt is ready to download."
+    assert edited.json()["edited_at"] is not None
+
+    # Nobody can edit someone else's message.
+    denied = api.patch(
+        f"/conversations/{direct['id']}/messages/{message['id']}",
+        headers=tenant_headers,
+        json={"body": "Not mine to edit"},
+    )
+    assert denied.status_code == 403
+
+
+def test_chat_edit_closes_after_one_hour(api, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    from app.api import collaboration as chat_api
+
+    owner_headers, ids, tenant_one, _ = _make_property_with_two_tenants(api)
+    direct = _open_direct_with_tenant(api, owner_headers, ids, tenant_one["phone"])
+    posted = api.post(
+        f"/conversations/{direct['id']}/messages",
+        headers=owner_headers,
+        json={"body": "Dinner at 8?"},
+    )
+    assert posted.status_code == 201, posted.text
+
+    class FutureDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime.now(tz or timezone.utc) + timedelta(hours=2)
+
+    monkeypatch.setattr(chat_api, "datetime", FutureDatetime)
+    late_edit = api.patch(
+        f"/conversations/{direct['id']}/messages/{posted.json()['id']}",
+        headers=owner_headers,
+        json={"body": "Too late now"},
+    )
+    assert late_edit.status_code == 403
+    assert "1 hour" in late_edit.json()["detail"]
+
+
+def test_payment_reminder_is_mirrored_into_tenant_chat(api):
+    owner_headers, _, tenant_one, _ = _make_property_with_two_tenants(api)
+    invoices = api.post(
+        "/invoices/generate", headers=owner_headers, json={"month": "2026-10"}
+    ).json()
+    assert invoices, "expected a rent invoice for the active stay"
+    invoice = invoices[0]
+
+    reminder = api.post(
+        "/payment-reminders",
+        headers=owner_headers,
+        json={
+            "invoice_id": invoice["id"],
+            "reminder_type": "due",
+            "reminder_date": "2026-10-01",
+            "channel": "in_app",
+        },
+    )
+    assert reminder.status_code == 201, reminder.text
+
+    tenant_headers = _tenant_headers(api, tenant_one["phone"])
+    conversations = api.get("/conversations", headers=tenant_headers).json()["conversations"]
+    bodies = []
+    for conversation in conversations:
+        page = api.get(
+            f"/conversations/{conversation['id']}/messages", headers=tenant_headers
+        )
+        assert page.status_code == 200, page.text
+        bodies.extend(message["body"] for message in page.json()["messages"])
+
+    mirrored = [body for body in bodies if body.startswith("🔔 Rent reminder")]
+    assert len(mirrored) == 1
+    assert "October 2026" in mirrored[0]

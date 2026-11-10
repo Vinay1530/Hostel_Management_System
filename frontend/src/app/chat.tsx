@@ -2,6 +2,7 @@ import { api, WS_HOST } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { design, getShadow } from "@/lib/design";
 import { roleAccents } from "@/lib/theme";
+import { Sheet } from "@/components/ui";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -39,6 +40,11 @@ type Contact = {
   property_id: string;
   property_name: string;
 };
+type Reaction = {
+  emoji: string;
+  user_id: string;
+  user_name: string;
+};
 type Message = {
   id: string;
   conversation_id: string;
@@ -46,7 +52,55 @@ type Message = {
   sender_name: string;
   body: string;
   created_at: string;
+  edited_at: string | null;
+  delivery_status: "sent" | "delivered" | "read";
+  reactions: Reaction[];
 };
+
+const EDIT_WINDOW_MS = 60 * 60 * 1000;
+const REACTION_EMOJIS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
+
+function parseDate(value: string): Date {
+  return new Date(
+    value.endsWith("Z") || value.includes("+") ? value : `${value}Z`
+  );
+}
+
+function canEditMessage(message: Message, myUserId: string | null): boolean {
+  if (!myUserId || message.sender_id !== myUserId) return false;
+  const created = parseDate(message.created_at).getTime();
+  return Number.isFinite(created) && Date.now() - created <= EDIT_WINDOW_MS;
+}
+
+function summarizeReactions(reactions: Reaction[], myUserId: string | null) {
+  const map = new Map<string, { emoji: string; count: number; mine: boolean }>();
+  for (const reaction of reactions) {
+    const current =
+      map.get(reaction.emoji) ?? { emoji: reaction.emoji, count: 0, mine: false };
+    current.count += 1;
+    if (reaction.user_id === myUserId) current.mine = true;
+    map.set(reaction.emoji, current);
+  }
+  return Array.from(map.values());
+}
+
+function DeliveryTicks({ status }: { status: Message["delivery_status"] }) {
+  if (status === "read") {
+    return <Ionicons name="checkmark-done" size={14} color="#34B7F1" />;
+  }
+  if (status === "delivered") {
+    return (
+      <Ionicons
+        name="checkmark-done"
+        size={14}
+        color={design.colors.textMuted}
+      />
+    );
+  }
+  return (
+    <Ionicons name="checkmark" size={13} color={design.colors.textMuted} />
+  );
+}
 
 type ListRow =
   | { kind: "conversation"; conversation: Conversation }
@@ -55,7 +109,7 @@ type ListSection = { id: string; label: string; rows: ListRow[] };
 
 function formatLastMessageTime(value: string | null): string {
   if (!value) return "";
-  const date = new Date(value.endsWith("Z") ? value : `${value}Z`);
+  const date = parseDate(value);
   if (Number.isNaN(date.getTime())) return "";
   const now = new Date();
   const sameDay = date.toDateString() === now.toDateString();
@@ -68,13 +122,13 @@ function formatLastMessageTime(value: string | null): string {
 }
 
 function timeOnly(value: string): string {
-  const date = new Date(value.endsWith("Z") ? value : `${value}Z`);
+  const date = parseDate(value);
   if (Number.isNaN(date.getTime())) return "";
   return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
 function dayLabel(value: string): string {
-  const date = new Date(value.endsWith("Z") ? value : `${value}Z`);
+  const date = parseDate(value);
   if (Number.isNaN(date.getTime())) return "";
   const now = new Date();
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
@@ -105,12 +159,16 @@ export function ChatScreen() {
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
+  const [myUserId, setMyUserId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
+  const [editing, setEditing] = useState<Message | null>(null);
+  const [actionMessage, setActionMessage] = useState<Message | null>(null);
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
   const listRef = useRef<FlatList<Message>>(null);
+  const inputRef = useRef<TextInput>(null);
   const isTenant = role === "tenant";
   const params = useLocalSearchParams<{
     tenantUserId?: string | string[];
@@ -126,9 +184,14 @@ export function ChatScreen() {
       setError(null);
       // Always load ALL conversations for the org; building info comes from
       // each conversation's property_name, not a query filter.
-      const result = await api.get<{ conversations: Conversation[]; contacts: Contact[] }>("/conversations");
+      const result = await api.get<{
+        conversations: Conversation[];
+        contacts: Contact[];
+        me_id: string | null;
+      }>("/conversations");
       setConversations(result.conversations);
       setContacts(result.contacts);
+      setMyUserId(result.me_id ?? null);
       // Default to the list view; only keep an open thread if it still exists.
       setSelectedId((current) =>
         current && result.conversations.some((item) => item.id === current) ? current : null);
@@ -181,6 +244,9 @@ export function ChatScreen() {
 
   useEffect(() => {
     setMessages([]);
+    setEditing(null);
+    setActionMessage(null);
+    setDraft("");
     if (selectedId) loadMessages(true);
   }, [loadMessages, selectedId]);
 
@@ -189,20 +255,65 @@ export function ChatScreen() {
     const url = `${WS_HOST}/ws/chat?conversation_id=${encodeURIComponent(selectedId)}`;
     const socket = new WebSocket(url, ["bearer", token]);
     socketRef.current = socket;
-    socket.onopen = () => setError(null);
+    socket.onopen = () => {
+      setError(null);
+      if (socket.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({ type: "read" }));
+      }
+    };
     socket.onmessage = (event) => {
-      const data = JSON.parse(String(event.data)) as Message | { error: string };
-      if ("error" in data) {
+      let data: any;
+      try {
+        data = JSON.parse(String(event.data));
+      } catch {
+        return;
+      }
+      if (data?.error) {
         setError(data.error);
         return;
       }
-      setMessages((current) => current.some((message) => message.id === data.id) ? current : [...current, data]);
-      if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "read" }));
+      if (data?.type === "read") {
+        loadMessages(false);
+        return;
+      }
+      const incoming: Message | null =
+        data?.type === "message"
+          ? data.message
+          : data?.type === "message_updated"
+            ? null
+            : data?.id
+              ? (data as Message)
+              : null;
+      if (data?.type === "message_updated" && data.message) {
+        const updated = data.message as Message;
+        setMessages((current) =>
+          current.map((message) => (message.id === updated.id ? updated : message))
+        );
+        return;
+      }
+      if (!incoming) return;
+
+      setMessages((current) =>
+        current.some((message) => message.id === incoming.id)
+          ? current
+          : [...current, incoming]
+      );
+      if (socket.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({ type: "read" }));
+      }
       setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 60);
-      setConversations((current) => current.map((item) => item.id === selectedId
-        ? { ...item, last_message: data.body, last_message_at: data.created_at, unread_count: 0 }
-        : item
-      ));
+      setConversations((current) =>
+        current.map((item) =>
+          item.id === selectedId
+            ? {
+                ...item,
+                last_message: incoming.body,
+                last_message_at: incoming.created_at,
+                unread_count: 0,
+              }
+            : item
+        )
+      );
     };
     socket.onerror = () => {
       setError("Live chat disconnected; checking for new messages periodically.");
@@ -246,6 +357,19 @@ export function ChatScreen() {
     setSending(true);
     setError(null);
     try {
+      if (editing) {
+        const updated = await api.patch<Message>(
+          `/conversations/${selected.id}/messages/${editing.id}`,
+          { body }
+        );
+        setMessages((current) =>
+          current.map((item) => (item.id === updated.id ? updated : item))
+        );
+        setEditing(null);
+        setDraft("");
+        return;
+      }
+
       const socket = socketRef.current;
       if (socket?.readyState === WebSocket.OPEN) {
         socket.send(JSON.stringify({ body }));
@@ -259,6 +383,40 @@ export function ChatScreen() {
       setError(e?.message ?? "Message could not be sent");
     } finally {
       setSending(false);
+    }
+  }
+
+  function cancelEdit() {
+    setEditing(null);
+    setDraft("");
+  }
+
+  function startEdit(message: Message) {
+    setActionMessage(null);
+    setEditing(message);
+    setDraft(message.body);
+    setTimeout(() => inputRef.current?.focus(), 80);
+  }
+
+  async function reactTo(message: Message, emoji: string) {
+    if (!selected) return;
+    const mine = message.reactions.find((reaction) => reaction.user_id === myUserId);
+    try {
+      setActionMessage(null);
+      const updated =
+        mine?.emoji === emoji
+          ? await api.delete<Message>(
+              `/conversations/${selected.id}/messages/${message.id}/reaction`
+            )
+          : await api.put<Message>(
+              `/conversations/${selected.id}/messages/${message.id}/reaction`,
+              { emoji }
+            );
+      setMessages((current) =>
+        current.map((item) => (item.id === updated.id ? updated : item))
+      );
+    } catch (e: any) {
+      setError(e?.message ?? "Could not update your reaction");
     }
   }
 
@@ -483,6 +641,8 @@ export function ChatScreen() {
           const previous = index > 0 ? messages[index - 1] : null;
           const showDay =
             !previous || dayLabel(previous.created_at) !== dayLabel(item.created_at);
+          const mine = item.sender_id === myUserId;
+          const reactionSummary = summarizeReactions(item.reactions, myUserId);
           return (
             <View>
               {showDay ? (
@@ -492,12 +652,55 @@ export function ChatScreen() {
                   <View style={styles.dayLine} />
                 </View>
               ) : null}
-              <View style={styles.messageRow}>
-                <View style={styles.messageBubble}>
-                  <Text style={[styles.sender, { color: accent.accent }]}>{item.sender_name}</Text>
+              <View style={[styles.messageRow, mine && styles.messageRowMine]}>
+                <TouchableOpacity
+                  activeOpacity={0.9}
+                  delayLongPress={2000}
+                  onLongPress={() => setActionMessage(item)}
+                  style={[
+                    styles.messageBubble,
+                    mine && styles.messageBubbleMine,
+                    mine && {
+                      backgroundColor: accent.accentSoft,
+                      borderColor: `${accent.accent}40`,
+                    },
+                  ]}
+                >
+                  {!mine ? (
+                    <Text style={[styles.sender, { color: accent.accent }]}>
+                      {item.sender_name}
+                    </Text>
+                  ) : null}
                   <Text style={styles.messageText}>{item.body}</Text>
-                  <Text style={styles.time}>{timeOnly(item.created_at)}</Text>
-                </View>
+                  {reactionSummary.length > 0 ? (
+                    <View style={styles.reactionRow}>
+                      {reactionSummary.map((reaction) => (
+                        <View
+                          key={reaction.emoji}
+                          style={[
+                            styles.reactionPill,
+                            reaction.mine && {
+                              backgroundColor: accent.accentSoft,
+                              borderColor: accent.accent,
+                            },
+                          ]}
+                        >
+                          <Text style={styles.reactionEmoji}>{reaction.emoji}</Text>
+                          {reaction.count > 1 ? (
+                            <Text style={styles.reactionCount}>{reaction.count}</Text>
+                          ) : null}
+                        </View>
+                      ))}
+                    </View>
+                  ) : null}
+                  <View style={styles.messageMeta}>
+                    {item.edited_at ? (
+                      <Text style={styles.editedLabel}>edited</Text>
+                    ) : null}
+                    <Text style={styles.time}>{timeOnly(item.created_at)}</Text>
+                    {mine ? <DeliveryTicks status={item.delivery_status} /> : null}
+                  </View>
+                </TouchableOpacity>
               </View>
             </View>
           );
@@ -515,11 +718,27 @@ export function ChatScreen() {
         onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: false })}
       />
 
+      {selected && !isReadOnlyAnnouncement && editing ? (
+        <View style={styles.editBar}>
+          <Ionicons name="create-outline" size={15} color={accent.accent} />
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text style={styles.editBarLabel}>EDITING MESSAGE</Text>
+            <Text style={styles.editBarText} numberOfLines={1}>
+              {editing.body}
+            </Text>
+          </View>
+          <TouchableOpacity onPress={cancelEdit} hitSlop={10}>
+            <Ionicons name="close" size={18} color={design.colors.textMuted} />
+          </TouchableOpacity>
+        </View>
+      ) : null}
+
       {selected && !isReadOnlyAnnouncement && (
         <View style={styles.composer}>
           <TextInput
+            ref={inputRef}
             style={styles.messageInput}
-            placeholder="Write a message…"
+            placeholder={editing ? "Edit your message…" : "Write a message…"}
             placeholderTextColor={design.colors.textMuted}
             value={draft}
             onChangeText={setDraft}
@@ -534,12 +753,12 @@ export function ChatScreen() {
             ]}
             onPress={send}
             disabled={!draft.trim() || sending}
-            accessibilityLabel="Send message"
+            accessibilityLabel={editing ? "Save edited message" : "Send message"}
           >
             {sending ? (
               <ActivityIndicator color="#fff" size="small" />
             ) : (
-              <Ionicons name="send" size={17} color="#fff" />
+              <Ionicons name={editing ? "checkmark" : "send"} size={17} color="#fff" />
             )}
           </TouchableOpacity>
         </View>
@@ -550,6 +769,79 @@ export function ChatScreen() {
           <Text style={styles.readOnlyText}>Announcements are read-only</Text>
         </View>
       )}
+
+      <Sheet visible={!!actionMessage} onClose={() => setActionMessage(null)}>
+        {actionMessage ? (
+          <>
+            <Text style={styles.actionTitle}>Message options</Text>
+            <Text style={styles.actionPreview} numberOfLines={2}>
+              {actionMessage.body}
+            </Text>
+            <Text style={styles.actionLabel}>REACT WITH</Text>
+            <View style={styles.emojiRow}>
+              {REACTION_EMOJIS.map((emoji) => {
+                const active = actionMessage.reactions.some(
+                  (reaction) =>
+                    reaction.user_id === myUserId && reaction.emoji === emoji
+                );
+                return (
+                  <TouchableOpacity
+                    key={emoji}
+                    style={[
+                      styles.emojiButton,
+                      active && {
+                        borderColor: accent.accent,
+                        backgroundColor: accent.accentSoft,
+                      },
+                    ]}
+                    onPress={() => reactTo(actionMessage, emoji)}
+                    activeOpacity={0.85}
+                  >
+                    <Text style={styles.emojiText}>{emoji}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            {actionMessage.sender_id === myUserId ? (
+              canEditMessage(actionMessage, myUserId) ? (
+                <TouchableOpacity
+                  style={styles.sheetAction}
+                  onPress={() => startEdit(actionMessage)}
+                  activeOpacity={0.85}
+                >
+                  <View
+                    style={[
+                      styles.sheetActionIcon,
+                      { backgroundColor: accent.accentSoft },
+                    ]}
+                  >
+                    <Ionicons name="create-outline" size={17} color={accent.accent} />
+                  </View>
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <Text style={styles.sheetActionTitle}>Edit message</Text>
+                    <Text style={styles.sheetActionSub}>
+                      Available for 1 hour after sending
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+              ) : (
+                <View style={styles.editExpired}>
+                  <Ionicons
+                    name="time-outline"
+                    size={15}
+                    color={design.colors.textMuted}
+                  />
+                  <Text style={styles.editExpiredText}>
+                    Editing is closed — messages can only be edited within 1 hour
+                    of sending.
+                  </Text>
+                </View>
+              )
+            ) : null}
+          </>
+        ) : null}
+      </Sheet>
     </KeyboardAvoidingView>
   );
 }
@@ -833,6 +1125,7 @@ const styles = StyleSheet.create({
   dayLine: { flex: 1, height: 1, backgroundColor: design.colors.border },
   dayText: { fontSize: 10, fontWeight: "700", color: design.colors.textMuted },
   messageRow: { alignItems: "flex-start", marginVertical: 3 },
+  messageRowMine: { alignItems: "flex-end" },
   messageBubble: {
     maxWidth: "86%",
     backgroundColor: "#fff",
@@ -845,9 +1138,49 @@ const styles = StyleSheet.create({
     borderColor: design.colors.border,
     ...getShadow("sm"),
   },
+  messageBubbleMine: {
+    borderBottomLeftRadius: 14,
+    borderBottomRightRadius: 5,
+  },
   sender: { fontSize: 10, fontWeight: "800", marginBottom: 2 },
   messageText: { color: design.colors.textPrimary, fontSize: 14, lineHeight: 20 },
-  time: { color: design.colors.textMuted, fontSize: 9, alignSelf: "flex-end", marginTop: 3 },
+  messageMeta: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "flex-end",
+    gap: 4,
+    marginTop: 3,
+  },
+  editedLabel: {
+    color: design.colors.textMuted,
+    fontSize: 9,
+    fontStyle: "italic",
+    marginRight: 1,
+  },
+  time: { color: design.colors.textMuted, fontSize: 9 },
+  reactionRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 4,
+    marginTop: 5,
+  },
+  reactionPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 2,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: design.colors.border,
+    backgroundColor: "#fff",
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+  },
+  reactionEmoji: { fontSize: 13 },
+  reactionCount: {
+    color: design.colors.textSecondary,
+    fontSize: 9,
+    fontWeight: "800",
+  },
   threadEmpty: { alignItems: "center", gap: 8, paddingVertical: 30 },
   error: {
     color: design.colors.danger,
@@ -864,6 +1197,102 @@ const styles = StyleSheet.create({
     backgroundColor: "#fff",
     borderTopWidth: 1,
     borderColor: design.colors.border,
+  },
+  editBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 9,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    backgroundColor: "#fff",
+    borderTopWidth: 1,
+    borderColor: design.colors.border,
+  },
+  editBarLabel: {
+    fontSize: 8,
+    fontWeight: "800",
+    letterSpacing: 0.8,
+    color: design.colors.textMuted,
+  },
+  editBarText: {
+    fontSize: 12,
+    color: design.colors.textSecondary,
+    marginTop: 1,
+  },
+  actionTitle: {
+    fontSize: 16,
+    fontWeight: "800",
+    color: design.colors.textPrimary,
+    marginBottom: 4,
+  },
+  actionPreview: {
+    fontSize: 12,
+    color: design.colors.textSecondary,
+    lineHeight: 18,
+    marginBottom: 12,
+  },
+  actionLabel: {
+    fontSize: 9,
+    fontWeight: "800",
+    letterSpacing: 0.9,
+    color: design.colors.textMuted,
+    marginBottom: 8,
+  },
+  emojiRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    gap: 6,
+    marginBottom: 14,
+  },
+  emojiButton: {
+    flex: 1,
+    height: 46,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: design.colors.border,
+    backgroundColor: design.colors.background,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  emojiText: { fontSize: 23 },
+  sheetAction: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingVertical: 10,
+    borderTopWidth: 1,
+    borderTopColor: design.colors.border,
+  },
+  sheetActionIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: 11,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  sheetActionTitle: {
+    fontSize: 14,
+    fontWeight: "800",
+    color: design.colors.textPrimary,
+  },
+  sheetActionSub: {
+    fontSize: 11,
+    color: design.colors.textMuted,
+    marginTop: 1,
+  },
+  editExpired: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 7,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: design.colors.border,
+  },
+  editExpiredText: {
+    flex: 1,
+    fontSize: 11,
+    color: design.colors.textMuted,
+    lineHeight: 16,
   },
   messageInput: {
     flex: 1,

@@ -216,3 +216,36 @@ def require_conversation_participant(
     if participant is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Conversation not found")
     return conversation
+
+
+def get_or_create_direct_conversation(
+    db: Session,
+    org_id: uuid.UUID,
+    prop: Property,
+    user_a_id: uuid.UUID,
+    user_b_id: uuid.UUID,
+) -> Conversation:
+    low, high = sorted((user_a_id, user_b_id), key=str)
+    conversation = db.execute(
+        select(Conversation).where(
+            Conversation.property_id == prop.id,
+            Conversation.type == ConversationType.direct,
+            Conversation.direct_user_low_id == low,
+            Conversation.direct_user_high_id == high,
+        )
+    ).scalar_one_or_none()
+    if conversation is None:
+        conversation = Conversation(
+            organization_id=org_id,
+            property_id=prop.id,
+            type=ConversationType.direct,
+            direct_user_low_id=low,
+            direct_user_high_id=high,
+        )
+        db.add(conversation)
+        db.flush()
+    for user_id in (user_a_id, user_b_id):
+        if db.get(ConversationParticipant, (conversation.id, user_id)) is None:
+            db.add(ConversationParticipant(conversation_id=conversation.id, user_id=user_id))
+    db.flush()
+    return conversation
