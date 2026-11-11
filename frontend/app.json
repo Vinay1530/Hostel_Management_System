@@ -15,7 +15,8 @@
       "typedRoutes": true
     },
     "android": {
-      "package": "com.pgms.owner"
+      "package": "com.pgms.owner",
+      "softwareKeyboardLayoutMode": "resize"
     },
     "ios": {
       "bundleIdentifier": "com.pgms.owner"

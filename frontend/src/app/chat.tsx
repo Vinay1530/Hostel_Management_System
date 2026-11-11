@@ -9,9 +9,7 @@ import type { GestureResponderEvent } from "react-native";
 import {
   ActivityIndicator,
   FlatList,
-  KeyboardAvoidingView,
   Modal,
-  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -673,10 +671,7 @@ export function ChatScreen() {
   const threadIcon = selected ? conversationIcon(selected.type) : "chatbubble-outline";
 
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
-    >
+    <View style={styles.container}>
       <View style={[styles.threadHeader, { backgroundColor: accent.accent }]}>
         <View style={styles.threadGlow} />
         <TouchableOpacity
@@ -939,7 +934,7 @@ export function ChatScreen() {
             : null}
         </Pressable>
       </Modal>
-    </KeyboardAvoidingView>
+    </View>
   );
 }
 

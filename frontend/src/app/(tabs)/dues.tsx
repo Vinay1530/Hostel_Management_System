@@ -5,6 +5,7 @@ import { Sheet } from "@/components/ui";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useMemo, useState } from "react";
+import { Linking } from "react-native";
 import {
   Alert,
   RefreshControl,
@@ -108,6 +109,14 @@ function monthsLabel(months: string[]): string {
   const sorted = [...months].sort();
   if (sorted.length === 1) return monthLabel(sorted[0]);
   return `${monthLabel(sorted[0])} – ${monthLabel(sorted[sorted.length - 1])}`;
+}
+
+function whatsappPhone(phone: string): string | null {
+  let digits = phone.replace(/\D/g, "");
+  if (digits.startsWith("00")) digits = digits.slice(2);
+  if (digits.length === 11 && digits.startsWith("0")) digits = digits.slice(1);
+  if (digits.length === 10) digits = `91${digits}`;
+  return digits.length >= 11 && digits.length <= 15 ? digits : null;
 }
 
 function groupStatusMeta(group: TenantDueGroup): {
@@ -279,6 +288,12 @@ export default function Dues() {
   async function sendReminder(group: TenantDueGroup) {
     const targets = group.open_invoices;
     if (targets.length === 0) return;
+    const phone = whatsappPhone(group.tenant_phone);
+    if (!phone) {
+      Alert.alert("Invalid phone number", `No valid WhatsApp number is saved for ${group.tenant_name}.`);
+      return;
+    }
+
     setRemindingId(group.tenant_id);
     let sent = 0;
     try {
@@ -291,22 +306,28 @@ export default function Dues() {
         });
         sent += 1;
       }
+
+      const periods = [...new Set(targets.map((row) => monthLabel(row.period_month)))];
+      const periodText = periods.join(", ");
+      const message =
+        `Hi ${group.tenant_name}, this is a friendly reminder that your outstanding rent ` +
+        `of ${rupeesFromPaise(group.balance_paise)} for ${periodText} is due. ` +
+        `Property: ${group.property_name}, Room ${group.room_number}. ` +
+        "Please make the payment at your earliest convenience. If you have already paid, please ignore this message. Thank you.";
+      await Linking.openURL(
+        `https://wa.me/${phone}?text=${encodeURIComponent(message)}`
+      );
+
       Alert.alert(
-        "Reminder queued",
-        targets.length === 1
-          ? `A WhatsApp reminder was queued for ${group.tenant_name}.`
-          : `${sent} WhatsApp reminders were queued for ${group.tenant_name} across ${targets.length} open invoices.`
+        "WhatsApp opened",
+        `Review the reminder for ${group.tenant_name} and tap Send in WhatsApp. The ${sent === 1 ? "reminder is" : "reminders are"} still pending in the app until marked sent.`
       );
     } catch (e: any) {
-      const message =
-        typeof e?.detail === "string"
-          ? e.detail
-          : e?.message ?? "Could not create reminder";
       Alert.alert(
-        "Reminder failed",
-        sent > 0
-          ? `${sent} of ${targets.length} reminders were queued. ${message}`
-          : message
+        sent === targets.length ? "Could not open WhatsApp" : "Reminder failed",
+        sent === targets.length
+          ? `The reminder${sent === 1 ? "" : "s"} were queued, but WhatsApp could not be opened. You can try again or contact ${group.tenant_name} another way.`
+          : `${sent} of ${targets.length} reminders were queued. ${e?.detail ?? e?.message ?? "Could not create reminder"}`
       );
     } finally {
       setRemindingId(null);
@@ -583,7 +604,7 @@ export default function Dues() {
                             name={
                               sending
                                 ? "hourglass-outline"
-                                : "notifications-outline"
+                                : "logo-whatsapp"
                             }
                             size={15}
                             color={design.colors.primary}
@@ -593,7 +614,7 @@ export default function Dues() {
                             color={design.colors.primary}
                             style={{ fontWeight: "800" }}
                           >
-                            {sending ? "Sending…" : "Send Reminder"}
+                            {sending ? "Opening…" : "WhatsApp Reminder"}
                           </AppText>
                         </TouchableOpacity>
                         <TouchableOpacity

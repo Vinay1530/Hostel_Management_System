@@ -5,9 +5,8 @@ import { useRouter } from "expo-router";
 import { useState } from "react";
 import {
   ActivityIndicator,
-  KeyboardAvoidingView,
-  Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -57,9 +56,10 @@ export default function Login() {
   }
 
   return (
-    <KeyboardAvoidingView
+    <ScrollView
       style={styles.container}
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
+      contentContainerStyle={styles.content}
+      keyboardShouldPersistTaps="handled"
     >
       <View style={styles.card}>
         <View style={styles.logoRow}>
@@ -129,12 +129,13 @@ export default function Login() {
           </Pressable>
         )}
       </View>
-    </KeyboardAvoidingView>
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: design.colors.background, alignItems: "center", justifyContent: "center", padding: 24 },
+  container: { flex: 1, backgroundColor: design.colors.background },
+  content: { flexGrow: 1, alignItems: "center", justifyContent: "center", padding: 24 },
   card: { backgroundColor: design.colors.surface, borderRadius: 20, padding: 24, width: "100%", maxWidth: 400, borderWidth: 1, borderColor: design.colors.border, gap: 4 },
   logoRow: { flexDirection: "row", alignItems: "center", gap: 12, marginBottom: 8 },
   logo: { backgroundColor: design.colors.primary, borderRadius: 14, width: 48, height: 48, alignItems: "center", justifyContent: "center" },

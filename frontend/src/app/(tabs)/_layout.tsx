@@ -25,6 +25,7 @@ export default function TabLayout() {
           paddingTop: 6,
           paddingBottom: 4,
         } as any,
+        tabBarHideOnKeyboard: true,
       }}
     >
       <Tabs.Screen
